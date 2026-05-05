@@ -435,6 +435,376 @@ Restart Codex. This is not reliably hot-loaded.
 
 ## Command reference
 
+### `scan`
+
+Inspect skill-related directories and classify what is there.
+
+```bash
+skills-manager scan [--json]
+```
+
+What it reads:
+
+- `~/.agents/skills`
+- `~/.agents/skills-store/skills`
+- `~/.claude/skills`
+- `$CODEX_HOME/skills` or `~/.codex/skills`
+- optional project skill dirs when `--project` is provided
+
+What it reports:
+
+- normal skill dirs
+- symlinks
+- broken symlinks
+- dirs missing `SKILL.md`
+- duplicate names
+- duplicate content hashes
+
+What it mutates: nothing.
+
+Use it when you want to know what physical files exist before doing anything
+else.
+
+### `import`
+
+Adopt unmanaged skills from the inbox:
+
+```bash
+~/.agents/skills
+```
+
+```bash
+skills-manager import --dry-run
+skills-manager import
+```
+
+What it does:
+
+- scans `~/.agents/skills`
+- finds skill dirs not already in the managed store
+- copies them into `~/.agents/skills-store/skills/<stable-id>/`
+- writes `skill.json`
+
+What it does **not** do:
+
+- does not enable the skill
+- does not render it into Claude/Codex
+- does not delete the inbox copy
+
+Use it after external installers such as `npx skills add` drop skills into
+`~/.agents/skills`.
+
+### `adopt`
+
+Copy one explicit skill directory into the managed store.
+
+```bash
+skills-manager adopt /path/to/my-skill
+```
+
+What it does:
+
+- verifies `/path/to/my-skill/SKILL.md` exists
+- computes a deterministic content hash
+- copies the skill into `~/.agents/skills-store/skills/<stable-id>/`
+- writes `skill.json`
+
+What it does **not** do:
+
+- does not move the source directory
+- does not enable the skill
+- does not render it into Claude/Codex
+
+Use it when a skill lives somewhere random and you want `skills-manager` to own
+a managed copy.
+
+### `migrate`
+
+Bulk-adopt existing Claude/Codex skill directories into the managed store.
+
+```bash
+skills-manager migrate --dry-run
+skills-manager migrate --apply
+```
+
+What it reads:
+
+- `~/.claude/skills`
+- `$CODEX_HOME/skills` or `~/.codex/skills`
+
+What it does:
+
+- plans or copies existing client skills into `~/.agents/skills-store`
+- merges same-name/same-content skills
+- forks same-name/different-content skills into deterministic IDs
+- preserves original Claude/Codex skill dirs
+
+What it does **not** do:
+
+- does not delete original skill directories
+- does not enable migrated skills globally
+- does not render new output until you run `materialize`
+
+Use it for first-time setup when you already have a pile of Claude/Codex skills.
+
+### `state`
+
+Show effective desired state after applying manifests.
+
+```bash
+skills-manager state --client all --json
+skills-manager state --client codex --json
+skills-manager state --client claude --project /path/to/project --json
+```
+
+What it reads:
+
+- managed skills in `~/.agents/skills-store/skills`
+- global/profile/project/session manifests
+- client-specific enable/disable masks
+
+What it reports:
+
+- which managed skills are effectively enabled
+- which are disabled
+- why a skill is on or off
+- unknown IDs referenced by manifests
+
+What it mutates: nothing.
+
+Use it when you need to answer: “Should this skill be visible for this client
+and scope?”
+
+### `enable`
+
+Add a desired-state enable entry to a manifest.
+
+```bash
+skills-manager enable <skill> --scope global --client all
+skills-manager enable <skill> --scope project --project /path/to/project --client codex
+```
+
+`<skill>` can be a full skill ID or an alias when the alias resolves cleanly.
+
+What it does:
+
+- writes to the relevant manifest
+- removes the same skill from the matching disable list in that manifest
+
+What it does **not** do:
+
+- does not immediately create files in Claude/Codex skill dirs
+- does not restart Codex or Claude
+
+Run `materialize` after enabling.
+
+Use it when you want a managed skill to become visible.
+
+### `disable`
+
+Add a desired-state disable mask to a manifest.
+
+```bash
+skills-manager disable <skill> --scope global --client all
+skills-manager disable <skill> --scope project --project /path/to/project --client codex
+```
+
+What it does:
+
+- writes to the relevant manifest
+- removes the same skill from the matching enable list in that manifest
+
+Disable masks win inside their scope. That means a skill can be globally enabled
+but disabled for one project or session.
+
+What it does **not** do:
+
+- does not immediately remove rendered Claude/Codex links
+
+Run `materialize` after disabling.
+
+Use it when you want to hide a skill without deleting it from the store.
+
+### `materialize`
+
+Render desired state into actual Claude/Codex skill directories.
+
+This is the “make the filesystem match the manifests” command.
+
+```bash
+skills-manager materialize --client all --dry-run
+skills-manager materialize --client all
+skills-manager materialize --client codex
+skills-manager materialize --client claude --project /path/to/project
+```
+
+What it reads:
+
+- manifests
+- managed skill store
+- current rendered client directories
+
+What it does:
+
+- computes desired enabled skills for each client
+- creates symlinks from Claude/Codex skill dirs to managed store entries
+- removes old manager-created rendered entries that are no longer desired
+- writes a transaction journal before mutating anything
+
+What it refuses to do:
+
+- refuses to overwrite unmanaged real directories
+- refuses to delete anything it did not create
+
+Why the name is weird:
+
+The managed store and manifests are abstract desired state. Claude and Codex
+need actual directories on disk. `materialize` turns the abstract desired state
+into those physical symlinks/copies. It makes the ghost wear pants.
+
+Use it after `enable`, `disable`, `import`, `adopt`, `migrate`, or `restore`.
+
+For Codex, restart the session after materializing because skill loading is not
+reliably hot.
+
+### `diff`
+
+Compare desired state with rendered filesystem state.
+
+```bash
+skills-manager diff --client all
+skills-manager diff --client codex --project /path/to/project
+```
+
+What it reports:
+
+- links/copies that should be created
+- manager-created rendered entries that should be removed
+- unmanaged conflicts that block materialization
+- actual rendered entries
+
+What it mutates: nothing.
+
+Use it before `materialize` when you want a readable “what would change?” view.
+
+### `doctor`
+
+Run safety and consistency checks.
+
+```bash
+skills-manager doctor
+skills-manager doctor --project /path/to/project
+```
+
+What it checks:
+
+- broken symlinks
+- dirs missing `SKILL.md`
+- rendered conflicts
+- unsafe target dirs
+- desired-vs-actual problems
+
+What it mutates: nothing.
+
+Use it after materialization or when Claude/Codex skill loading looks wrong.
+
+### `rollback`
+
+Undo a previous manager-created materialization transaction.
+
+```bash
+skills-manager rollback <transaction-id>
+```
+
+Transaction journals live in:
+
+```bash
+~/.agents/skills-store/transactions/
+```
+
+What it does:
+
+- removes symlinks/copies created by that transaction
+- restores manager-created rendered links when possible
+
+What it refuses to do:
+
+- refuses to delete unmanaged dirs/files
+- refuses to delete original source skills
+
+Use it if a materialization did the wrong thing.
+
+### `backup`
+
+Create a portable backup of the managed skill system.
+
+```bash
+skills-manager backup --dry-run
+skills-manager backup --export ~/Downloads
+```
+
+What it includes:
+
+- `~/.agents/skills-store/skills`
+- `~/.agents/skills-store/manifests`
+- `~/.agents/skills-store/transactions`
+- `~/.agents/skills` inbox
+- metadata listing rendered Claude/Codex outputs
+
+What it does **not** treat as canonical:
+
+- rendered symlink-only output in `~/.claude/skills`
+- rendered symlink-only output in `~/.codex/skills`
+
+Use it when moving the managed skill setup to another machine.
+
+### `restore`
+
+Restore a backup created by `skills-manager backup`.
+
+```bash
+skills-manager restore --from ~/Downloads/agent-skills-backup --dry-run
+skills-manager restore --from ~/Downloads/agent-skills-backup --apply
+```
+
+What it does:
+
+- copies store/manifests/transactions back into `~/.agents/skills-store`
+- copies inbox data back into `~/.agents/skills`
+
+What it does **not** do:
+
+- does not automatically render Claude/Codex outputs
+
+After restore, run:
+
+```bash
+skills-manager materialize --client all
+skills-manager doctor
+```
+
+Use it after transferring a backup to another machine or rebuilding local state.
+
+## Quick command table
+
+| Command | Plain-English meaning | Mutates? | Usually followed by |
+| --- | --- | --- | --- |
+| `scan` | What skill-looking files exist? | No | `migrate`, `import`, or `doctor` |
+| `import` | Copy inbox skills into managed store | Yes | `enable`, `materialize` |
+| `adopt` | Copy one explicit skill into managed store | Yes | `enable`, `materialize` |
+| `migrate` | Copy existing Claude/Codex skills into managed store | Yes with `--apply` | `enable`, `materialize` |
+| `state` | What should be enabled after masks? | No | `enable`/`disable` or `materialize` |
+| `enable` | Mark skill as desired-visible | Yes | `materialize` |
+| `disable` | Mark skill as desired-hidden | Yes | `materialize` |
+| `materialize` | Make Claude/Codex dirs match desired state | Yes unless `--dry-run` | `doctor` |
+| `diff` | Show desired vs actual rendered dirs | No | `materialize` |
+| `doctor` | Find broken/conflicting skill state | No | fix conflicts |
+| `rollback` | Undo manager-created render changes | Yes | `doctor` |
+| `backup` | Export managed store/inbox | Yes with `--export` | copy backup somewhere |
+| `restore` | Import managed store/inbox from backup | Yes with `--apply` | `materialize`, `doctor` |
+
+## Raw command syntax
+
 ```bash
 skills-manager scan [--json]
 skills-manager import [--dry-run]
