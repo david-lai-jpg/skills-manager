@@ -1,7 +1,7 @@
 [project]
 name = "skills-manager"
 version = "0.1.0"
-description = "CLI-first Agent Skill manager for Claude and Codex"
+description = "TUI-first Agent Skill manager for Claude and Codex"
 requires-python = ">=3.10"
 
 [project.scripts]

@@ -16,6 +16,8 @@ This repo uses the **single-context** layout:
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The producer skill (`/grill-with-docs`) creates them lazily when terms or decisions actually get resolved.
 
+For this repo, `CONTEXT.md`, `README.md`, `SKILL.md`, and `AGENTS.md` should use the same current state vocabulary: TUI-first control panel, managed store, manifests, presets, action log, materialize, rendered outputs, and rollback. Older `profile`-scope language is stale.
+
 ## File structure
 
 ```text

@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from . import adapters, resolver, store, transactions
+from . import action_log, adapters, resolver, store, transactions
 
 
 def managed_rendered_id(path: Path) -> str | None:
@@ -112,7 +112,7 @@ def apply_action(action: dict[str, Any]) -> None:
             action["op"] = "create_copy"
 
 
-def materialize(client: str, project: str | Path | None = None, dry_run: bool = False) -> dict[str, Any]:
+def materialize(client: str, project: str | Path | None = None, dry_run: bool = False, surface: str = "core") -> dict[str, Any]:
     d, actions = plan_actions(client, project)
     if d["conflicts"]:
         return {"ok": False, "client": client, "dry_run": dry_run, "diff": d, "error": "unmanaged or mismatched rendered conflicts"}
@@ -123,6 +123,14 @@ def materialize(client: str, project: str | Path | None = None, dry_run: bool = 
         for action in actions:
             apply_action(action)
         transactions.mark(tx, "committed")
+        action_log.append(
+            "materialize",
+            surface=surface,
+            client=client,
+            project_path=str(Path(project).expanduser().resolve()) if project is not None else None,
+            transaction_id=tx["id"],
+            rendered_dir=d["rendered_dir"],
+        )
         return {"ok": True, "client": client, "dry_run": False, "transaction_id": tx["id"], "actions": actions}
     except Exception as exc:
         transactions.mark(tx, "failed", str(exc))

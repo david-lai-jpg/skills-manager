@@ -4,9 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import store
+from . import action_log, store
 
-SCOPES = ("global", "profile", "project", "session")
+SCOPES = ("global", "project", "session")
 
 
 def _manifest_sequence(project: str | Path | None = None) -> list[tuple[str, dict[str, Any]]]:
@@ -70,7 +70,14 @@ def resolve(client: str, project: str | Path | None = None) -> dict[str, Any]:
     return {"client": client, "desired": desired, "skills": by_skill, "unknown_enabled_ids": unknown}
 
 
-def set_skill(scope: str, skill_id: str, enabled: bool, client: str = "all", project: str | Path | None = None) -> Path:
+def set_skill(
+    scope: str,
+    skill_id: str,
+    enabled: bool,
+    client: str = "all",
+    project: str | Path | None = None,
+    surface: str = "core",
+) -> Path:
     manifest = store.load_manifest(scope, project=project)
     if client == "all":
         target = manifest
@@ -82,4 +89,14 @@ def set_skill(scope: str, skill_id: str, enabled: bool, client: str = "all", pro
     if skill_id not in target[add_key]:
         target[add_key].append(skill_id)
     target[remove_key] = [x for x in target[remove_key] if x != skill_id]
-    return store.save_manifest(scope, manifest, project=project)
+    path = store.save_manifest(scope, manifest, project=project)
+    action_log.append(
+        "enable" if enabled else "disable",
+        surface=surface,
+        scope=scope,
+        client=client,
+        skill_id=skill_id,
+        manifest_path=str(path),
+        project_path=str(Path(project).expanduser().resolve()) if project is not None else None,
+    )
+    return path

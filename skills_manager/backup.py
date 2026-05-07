@@ -23,7 +23,14 @@ def dry_run_export(export_path: str | Path | None = None) -> dict[str, Any]:
     target = str(backup_root(export_path or "./agent-skills-backup"))
     return {
         "target": target,
-        "include": [str(store.skills_root()), str(store.manifests_root()), str(store.transactions_root()), str(store.inbox_dir())],
+        "include": [
+            str(store.skills_root()),
+            str(store.manifests_root()),
+            str(store.transactions_root()),
+            str(store.presets_root()),
+            str(store.logs_root()),
+            str(store.inbox_dir()),
+        ],
         "rendered_metadata_only": {"claude": rendered_list("claude"), "codex": rendered_list("codex")},
     }
 
@@ -44,6 +51,8 @@ def export(export_path: str | Path) -> dict[str, Any]:
     copy_if_exists(store.skills_root(), root / "skills-store" / "skills")
     copy_if_exists(store.manifests_root(), root / "skills-store" / "manifests")
     copy_if_exists(store.transactions_root(), root / "skills-store" / "transactions")
+    copy_if_exists(store.presets_root(), root / "skills-store" / "presets")
+    copy_if_exists(store.logs_root(), root / "skills-store" / "logs")
     copy_if_exists(store.inbox_dir(), root / "inbox" / "agents-skills")
     store.write_json(root / "rendered" / "claude-skills-list.json", rendered_list("claude"))
     store.write_json(root / "rendered" / "codex-skills-list.json", rendered_list("codex"))
@@ -70,6 +79,8 @@ def restore_plan(path: str | Path) -> dict[str, Any]:
             {"from": str(root / "skills-store" / "skills"), "to": str(store.skills_root())},
             {"from": str(root / "skills-store" / "manifests"), "to": str(store.manifests_root())},
             {"from": str(root / "skills-store" / "transactions"), "to": str(store.transactions_root())},
+            {"from": str(root / "skills-store" / "presets"), "to": str(store.presets_root())},
+            {"from": str(root / "skills-store" / "logs"), "to": str(store.logs_root())},
             {"from": str(root / "inbox" / "agents-skills"), "to": str(store.inbox_dir())},
         ],
         "after": ["skills-manager materialize --client all", "skills-manager doctor"],

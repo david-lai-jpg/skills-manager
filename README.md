@@ -1,19 +1,52 @@
 # skills-manager
 
-CLI-first Agent Skill manager for Claude and Codex.
+TUI-first Agent Skill manager for Claude and Codex.
 
 It gives you one managed skill store and renders selected skills into each
 client’s real skill directory.
 
-No MCP. No GUI.
+No MCP. No runtime dependencies. No hidden database. It is plain files and
+careful filesystem plumbing.
+
+Run the bare command for the keyboard-only stdlib curses control panel:
+
+```bash
+skills-manager
+```
+
+Subcommands remain available for scripts and plumbing:
+
+```bash
+skills-manager --help
+skills-manager doctor
+skills-manager materialize --client all --dry-run
+```
+
+Current feature map:
+
+- bare command opens the keyboard-only TUI; an empty store starts in first-run
+  wizard mode
+- global/project/session desired-state manifests, with disable masks winning
+  in their scope
+- reusable presets stored as flat JSON templates
+- action log for applied mutations at
+  `~/.agents/skills-store/logs/actions.jsonl`
+- transaction journals before materialization and rollback over
+  manager-created rendered entries
+- backups that include skills, manifests, transactions, presets, logs, inbox,
+  and rendered-output metadata
+- `doctor` checks filesystem safety, desired-vs-actual state, and preset
+  validity
 
 ## Mental model
 
-There are three different places. Do not mush them together.
+There are several different places. Do not mush them together.
 
 | Path | Meaning |
 | --- | --- |
 | `~/.agents/skills-store` | Managed source of truth. Skills live here after import/adopt/migrate. |
+| `~/.agents/skills-store/presets` | Reusable preset templates. Applying a preset writes normal manifests; it is not a live profile. |
+| `~/.agents/skills-store/logs/actions.jsonl` | JSONL action log for applied mutations. Dry-runs and previews do not log. |
 | `~/.agents/skills` | Inbox for external installers such as `npx skills add`. Not the Codex canonical directory. |
 | `~/.claude/skills` | Claude rendered output. `skills-manager` creates symlinks/copies here. |
 | `$CODEX_HOME/skills` or `~/.codex/skills` | Codex rendered output. `skills-manager` creates symlinks/copies here. |
@@ -23,10 +56,12 @@ Important rule:
 ```text
 import/adopt/migrate = managed
 enable/disable       = desired visibility
+preset apply         = stamp desired visibility into manifests
 materialize          = render desired visibility into Claude/Codex
 ```
 
 Importing a skill does **not** enable it. That is intentional.
+Applying a preset also does **not** materialize it. That is intentional too.
 
 ## Install state on this machine
 
@@ -100,6 +135,12 @@ ln -s /Users/{userName}/Projects/skills-manager/bin/skills-manager ~/.local/bin/
 Use this when you already have skills in `~/.claude/skills` and/or
 `~/.codex/skills` and want `skills-manager` to adopt them into the managed
 store.
+
+If you run the bare command against an empty managed store, the TUI starts in
+first-run wizard mode and walks the same decisions: scan, consider backup,
+preview import/migrate, select initial skills or a preset, preview
+materialization, and run doctor. The CLI flow below is the explicit version for
+people who want to see every lever.
 
 ### 1. Preview the migration
 
@@ -233,6 +274,39 @@ The source directory is copied into the store. It is not moved.
 
 ## Continued use
 
+### Open the TUI
+
+```bash
+skills-manager
+```
+
+The TUI is a stdlib curses control panel over the same core commands. It is not
+a second state system. It gives you keyboard navigation, slash filtering,
+client modes (`all`, `claude`, `codex`), status/help text, and equivalent CLI
+command hints for scriptable follow-up.
+
+Current TUI-backed workflows cover:
+
+- first-run detection for empty stores, with wizard state for scan summaries,
+  migration/import candidates, backup recommendation, initial skill or preset
+  selection, materialize preview, doctor, and handoff to the normal dashboard
+- global/project desired-state views that separate direct entries from
+  inherited effective state, hide incompatible skills by default, and mark
+  edits as needing materialization
+- preset list/detail/create/capture/add/remove/rename/delete/apply previews,
+  including alias/ref errors and before/after manifest views
+- render reconciliation through diff/materialize previews, conflict refusal,
+  post-materialize doctor checks, Codex restart notes, and rollback previews
+  over transaction journals
+- intake flows for scan, inbox import, explicit adopt validation, migrate
+  preview/apply, and backup prompts before high-impact mutations
+- backup/restore previews and applies, with rendered outputs treated as
+  metadata only and post-restore materialize/doctor guidance
+
+The implementation deliberately keeps these workflows as testable pure helpers
+plus a thin curses shell. The boring design is the point; the filesystem is
+already chaotic enough without a secret UI state goblin.
+
 ### See what exists
 
 ```bash
@@ -277,6 +351,68 @@ skills-manager enable <skill> --scope global --client claude
 skills-manager materialize --client all
 ```
 
+## Presets
+
+Presets are flat JSON snapshot templates in:
+
+```bash
+~/.agents/skills-store/presets/
+```
+
+List presets:
+
+```bash
+skills-manager preset list
+```
+
+Inspect one preset with resolved skill existence, current aliases, stored
+aliases, and preset issues:
+
+```bash
+skills-manager preset show <name>
+```
+
+Create or capture a preset:
+
+```bash
+skills-manager preset create <name> [--description TEXT] [--tag TAG] [--dry-run]
+skills-manager preset create <name> --from-scope global [--dry-run]
+skills-manager preset create <name> --from-scope project --project /path/to/project [--dry-run]
+```
+
+Edit entries atomically:
+
+```bash
+skills-manager preset add <name> <skill...> [--mode enable|disable] [--dry-run]
+skills-manager preset remove <name> <skill...> [--mode enable|disable] [--dry-run]
+```
+
+Rename and delete are dry-run by default. Add `--apply` to mutate:
+
+```bash
+skills-manager preset rename <old-name> <new-name> [--apply]
+skills-manager preset delete <name> [--apply]
+```
+
+Deleting a preset removes only the preset JSON definition. It does not remove
+managed skills, manifests, or rendered Claude/Codex output.
+
+Apply a preset to normal desired-state manifests:
+
+```bash
+skills-manager preset apply <name> --scope global [--client all|claude|codex] [--replace] [--dry-run]
+skills-manager preset apply <name> --scope project [--project /path/to/project] [--client all|claude|codex] [--replace] [--dry-run]
+```
+
+Apply stamps enable/disable entries once. It does not materialize rendered
+skill directories and does not record preset provenance in manifests.
+
+Merge mode is the default. It adds preset entries and removes opposite entries
+inside touched buckets. `--replace` clears the selected bucket(s) before
+stamping. For `--client all`, replace clears top-level, Claude, and Codex
+buckets. For one client, top-level preset entries plus that client’s entries
+are stamped into that client bucket only.
+
 ## Diff and doctor
 
 Show desired-vs-rendered differences:
@@ -292,7 +428,7 @@ skills-manager doctor
 ```
 
 `doctor` checks for broken links, missing store entries, unmanaged conflicts,
-and unsafe target dirs.
+unsafe target dirs, and preset problems.
 
 ## Transactions and rollback
 
@@ -310,6 +446,18 @@ skills-manager rollback <transaction-id>
 
 Rollback only removes manager-created rendered entries. It refuses to delete
 unmanaged directories.
+
+## Action log
+
+Applied mutations append JSONL entries to:
+
+```bash
+~/.agents/skills-store/logs/actions.jsonl
+```
+
+Dry-runs and previews do not log. Entries include action names, surface,
+scope/client/manifest targets when applicable, preset names for preset actions,
+and materialization transaction IDs for render changes.
 
 ## Backup and restore
 
@@ -345,8 +493,9 @@ skills-manager materialize --client all
 skills-manager doctor
 ```
 
-Restore copies the managed store and inbox. It does not treat rendered
-Claude/Codex symlink outputs as canonical state.
+Restore copies the managed store, manifests, transactions, presets, action
+logs, and inbox. It does not treat rendered Claude/Codex symlink outputs as
+canonical state.
 
 ## Safe defaults
 
@@ -356,6 +505,8 @@ Claude/Codex symlink outputs as canonical state.
 - Only removes entries previously created by `skills-manager`.
 - Mutations are dry-runnable or rollbackable.
 - Import/adopt/migrate never auto-enable skills globally.
+- Preset apply never materializes by itself.
+- Dry-runs and TUI previews never write action-log entries.
 
 ## Common workflows
 
@@ -560,7 +711,7 @@ skills-manager state --client claude --project /path/to/project --json
 What it reads:
 
 - managed skills in `~/.agents/skills-store/skills`
-- global/profile/project/session manifests
+- global/project/session manifests
 - client-specific enable/disable masks
 
 What it reports:
@@ -574,6 +725,10 @@ What it mutates: nothing.
 
 Use it when you need to answer: “Should this skill be visible for this client
 and scope?”
+
+Supported desired-state scopes are `global`, `project`, and `session`. Older
+notes about `profile` scope are stale; profile support is intentionally not
+part of the current tool.
 
 ### `enable`
 
@@ -624,6 +779,39 @@ What it does **not** do:
 Run `materialize` after disabling.
 
 Use it when you want to hide a skill without deleting it from the store.
+
+### `preset`
+
+Manage reusable desired-state templates.
+
+```bash
+skills-manager preset list
+skills-manager preset show <name>
+skills-manager preset create <name> [--description TEXT] [--tag TAG] [--dry-run]
+skills-manager preset create <name> --from-scope global [--dry-run]
+skills-manager preset create <name> --from-scope project --project /path/to/project [--dry-run]
+skills-manager preset add <name> <skill...> [--mode enable|disable] [--dry-run]
+skills-manager preset remove <name> <skill...> [--mode enable|disable] [--dry-run]
+skills-manager preset rename <old-name> <new-name> [--apply]
+skills-manager preset delete <name> [--apply]
+skills-manager preset apply <name> --scope global [--client all|claude|codex] [--replace] [--dry-run]
+skills-manager preset apply <name> --scope project --project /path/to/project [--client all|claude|codex] [--replace] [--dry-run]
+```
+
+What it reads/writes:
+
+- preset JSON files under `~/.agents/skills-store/presets`
+- managed skill IDs and aliases for validation and alias resolution
+- global or project manifests when applying a preset
+
+What it does **not** do:
+
+- does not materialize rendered Claude/Codex output
+- does not delete managed skills when deleting a preset
+- does not create a live profile relationship after apply
+
+Use presets when you want a repeatable skill bundle such as “writing”, “debug”,
+or “frontend”, but still want final state to live in ordinary manifests.
 
 ### `materialize`
 
@@ -703,6 +891,7 @@ What it checks:
 - rendered conflicts
 - unsafe target dirs
 - desired-vs-actual problems
+- preset malformed JSON/schema, unknown IDs, duplicates, and alias drift
 
 What it mutates: nothing.
 
@@ -748,6 +937,8 @@ What it includes:
 - `~/.agents/skills-store/skills`
 - `~/.agents/skills-store/manifests`
 - `~/.agents/skills-store/transactions`
+- `~/.agents/skills-store/presets`
+- `~/.agents/skills-store/logs`
 - `~/.agents/skills` inbox
 - metadata listing rendered Claude/Codex outputs
 
@@ -769,7 +960,8 @@ skills-manager restore --from ~/Downloads/agent-skills-backup --apply
 
 What it does:
 
-- copies store/manifests/transactions back into `~/.agents/skills-store`
+- copies store/manifests/transactions/presets/logs back into
+  `~/.agents/skills-store`
 - copies inbox data back into `~/.agents/skills`
 
 What it does **not** do:
@@ -796,27 +988,41 @@ Use it after transferring a backup to another machine or rebuilding local state.
 | `state` | What should be enabled after masks? | No | `enable`/`disable` or `materialize` |
 | `enable` | Mark skill as desired-visible | Yes | `materialize` |
 | `disable` | Mark skill as desired-hidden | Yes | `materialize` |
+| `preset list/show` | Inspect preset templates | No | `doctor` |
+| `preset create/add/remove` | Edit preset templates | Yes unless `--dry-run` | `preset show` |
+| `preset rename/delete` | Move or remove preset definitions | Only with `--apply` | `preset list` |
+| `preset apply` | Stamp preset entries into manifests | Yes unless `--dry-run` | `materialize` |
 | `materialize` | Make Claude/Codex dirs match desired state | Yes unless `--dry-run` | `doctor` |
 | `diff` | Show desired vs actual rendered dirs | No | `materialize` |
 | `doctor` | Find broken/conflicting skill state | No | fix conflicts |
 | `rollback` | Undo manager-created render changes | Yes | `doctor` |
-| `backup` | Export managed store/inbox | Yes with `--export` | copy backup somewhere |
-| `restore` | Import managed store/inbox from backup | Yes with `--apply` | `materialize`, `doctor` |
+| `backup` | Export store, presets, logs, and inbox | Yes with `--export` | copy backup somewhere |
+| `restore` | Import store, presets, logs, and inbox from backup | Yes with `--apply` | `materialize`, `doctor` |
 
 ## Raw command syntax
 
 ```bash
+skills-manager
 skills-manager scan [--json]
 skills-manager import [--dry-run]
 skills-manager adopt <path>
 skills-manager migrate --dry-run
 skills-manager migrate --apply
 skills-manager state --client claude|codex|all [--project PATH] [--json]
-skills-manager enable <skill> --scope global|project|session|profile [--client claude|codex|all]
-skills-manager disable <skill> --scope global|project|session|profile [--client claude|codex|all]
+skills-manager enable <skill> --scope global|project|session [--client claude|codex|all] [--project PATH]
+skills-manager disable <skill> --scope global|project|session [--client claude|codex|all] [--project PATH]
+skills-manager preset list
+skills-manager preset show <name>
+skills-manager preset create <name> [--description TEXT] [--tag TAG] [--dry-run]
+skills-manager preset create <name> --from-scope global|project [--project PATH] [--dry-run]
+skills-manager preset add <name> <skill...> [--mode enable|disable] [--dry-run]
+skills-manager preset remove <name> <skill...> [--mode enable|disable] [--dry-run]
+skills-manager preset rename <old-name> <new-name> [--apply]
+skills-manager preset delete <name> [--apply]
+skills-manager preset apply <name> --scope global|project [--project PATH] [--client claude|codex|all] [--replace] [--dry-run]
 skills-manager materialize --client claude|codex|all [--project PATH] [--dry-run]
 skills-manager diff --client claude|codex|all [--project PATH]
-skills-manager doctor
+skills-manager doctor [--project PATH]
 skills-manager rollback <transaction-id>
 skills-manager backup --dry-run
 skills-manager backup --export PATH

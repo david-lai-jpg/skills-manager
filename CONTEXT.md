@@ -39,10 +39,8 @@ Important invariant:
 
 ## Current Architecture Facts
 
-- The existing code has `global`, `profile`, `project`, and `session` scope concepts.
-- `profile` support is half-wired: storage/resolver support exists, but there is no explicit `--profile` CLI UX.
-- The user has not installed or depended on profile behavior.
-- The redesign should **remove profile scope**, not expand it.
+- The desired-state scope model is `global`, `project`, and `session`.
+- The old half-wired `profile` scope was removed; do not reintroduce it.
 - Presets replace the earlier profile-overlay idea.
 
 ## Product Pivot: TUI First
@@ -425,7 +423,7 @@ Preset core tests should cover:
 - dry-run before/after output
 - atomic apply failure
 
-Resolver tests should be updated for removal of profile scope.
+Resolver tests cover profile-scope removal.
 
 Doctor tests should cover preset validation.
 

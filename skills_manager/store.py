@@ -44,8 +44,16 @@ def transactions_root() -> Path:
     return store_root() / "transactions"
 
 
+def logs_root() -> Path:
+    return store_root() / "logs"
+
+
+def presets_root() -> Path:
+    return store_root() / "presets"
+
+
 def ensure_store() -> None:
-    for path in (skills_root(), manifests_root(), transactions_root()):
+    for path in (skills_root(), manifests_root(), transactions_root(), presets_root(), logs_root()):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -146,15 +154,11 @@ def project_key(project: str | Path) -> str:
 def manifest_path(
     scope: str,
     project: str | Path | None = None,
-    profile: str | None = None,
     session: str | None = None,
 ) -> Path:
     root = manifests_root()
     if scope == "global":
         return root / "global.json"
-    if scope == "profile":
-        name = slugify(profile or os.environ.get("SKILLS_MANAGER_PROFILE") or "default")
-        return root / "profiles" / f"{name}.json"
     if scope == "project":
         base = Path(project or os.getcwd()).expanduser().resolve()
         return root / "projects" / f"{project_key(base)}.json"
@@ -167,10 +171,9 @@ def manifest_path(
 def load_manifest(
     scope: str,
     project: str | Path | None = None,
-    profile: str | None = None,
     session: str | None = None,
 ) -> dict[str, Any]:
-    path = manifest_path(scope, project=project, profile=profile, session=session)
+    path = manifest_path(scope, project=project, session=session)
     data = read_json(path, manifest_template())
     base = manifest_template()
     base.update({k: v for k, v in data.items() if k != "clients"})
@@ -187,10 +190,9 @@ def save_manifest(
     scope: str,
     manifest: dict[str, Any],
     project: str | Path | None = None,
-    profile: str | None = None,
     session: str | None = None,
 ) -> Path:
-    path = manifest_path(scope, project=project, profile=profile, session=session)
+    path = manifest_path(scope, project=project, session=session)
     write_json(path, manifest)
     return path
 

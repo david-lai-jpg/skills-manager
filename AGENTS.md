@@ -2,9 +2,11 @@
 
 ## Mission
 
-This repo is `skills-manager`: a dependency-light Python CLI that manages Claude and Codex Agent Skills through one canonical managed store, desired-state manifests, safe materialization into client skill directories, backups, restores, and rollback journals.
+This repo is `skills-manager`: a dependency-light, TUI-first Python tool that manages Claude and Codex Agent Skills through one canonical managed store, desired-state manifests, reusable presets, safe materialization into client skill directories, action logs, backups, restores, and rollback journals.
 
-Do not treat rendered client skill directories as source. The source of truth is the managed store plus manifests.
+The bare `skills-manager` command opens the stdlib curses control panel. CLI subcommands remain the automation and test surface.
+
+Do not treat rendered client skill directories as source. The source of truth is the managed store plus manifests. Presets are reusable templates, not live profiles.
 
 ## Hard rules
 
@@ -23,7 +25,9 @@ Do not treat rendered client skill directories as source. The source of truth is
 - Tests: `tests/test_skills_manager.py`, stdlib `unittest`.
 - User docs: `README.md`.
 - Wrapper skill docs: `SKILL.md`.
+- Shared domain context: `CONTEXT.md`.
 - Per-agent setup docs: `docs/agents/`.
+- Task memory: `tasks/todo.md` and `tasks/lessons.md`.
 
 ## Architecture map
 
@@ -31,39 +35,50 @@ Do not treat rendered client skill directories as source. The source of truth is
   - Claude: `~/.claude/skills`
   - Codex: `$CODEX_HOME/skills` or `~/.codex/skills`
   - Project scope: `.<client>/skills` under the provided project path.
-- `skills_manager/store.py` owns home/store paths, skill IDs, manifests, content hashing, JSON I/O, manager markers, and path-safety helpers.
+- `skills_manager/store.py` owns home/store paths, skill IDs, manifests, preset/log roots, content hashing, JSON I/O, manager markers, and path-safety helpers.
 - `skills_manager/scanner.py` classifies physical skill-looking directories, symlinks, broken symlinks, and missing `SKILL.md` cases.
 - `skills_manager/planner.py` plans and applies `import`, `adopt`, and `migrate`. These copy skills into the managed store; they do not enable skills.
-- `skills_manager/resolver.py` resolves effective desired state from global, profile, project, and session manifests. Disable masks win in their scope.
+- `skills_manager/resolver.py` resolves effective desired state from global, project, and session manifests. Disable masks win in their scope. There is no profile scope.
+- `skills_manager/presets.py` owns flat preset JSON files: list/show, schema validation, create/capture, add/remove, rename/delete, and apply-to-manifest behavior.
 - `skills_manager/materializer.py` compares desired state with rendered output and creates/removes only manager-owned rendered entries.
 - `skills_manager/transactions.py` writes materialization journals and rolls back manager-created render changes.
-- `skills_manager/backup.py` exports/restores the managed store and inbox; rendered client directories are metadata-only in backups.
-- `skills_manager/cli.py` is the argparse boundary. Keep business rules in modules, not buried in CLI handlers.
+- `skills_manager/action_log.py` appends JSONL records for applied CLI/core mutations. Dry-runs and previews do not log.
+- `skills_manager/backup.py` exports/restores the managed store, manifests, transactions, presets, logs, and inbox; rendered client directories are metadata-only in backups.
+- `skills_manager/tui.py` owns the stdlib curses shell plus pure helper functions for first-run, desired-state editing, presets, render/doctor/rollback, intake, backup, and restore previews/applies. Keep business rules in core modules where practical; keep curses rendering thin and test helpers directly.
+- `skills_manager/cli.py` is the argparse boundary. Bare invocation launches the TUI; subcommands expose automation. Keep business rules in modules, not buried in CLI handlers.
 
 ## State model vocabulary
 
 Use these terms consistently:
 
 - `~/.agents/skills-store` — managed source of truth.
+- `~/.agents/skills-store/skills` — canonical managed skill copies.
+- `~/.agents/skills-store/manifests` — desired-state manifests for global/project/session scopes.
+- `~/.agents/skills-store/presets` — flat preset templates that can stamp enable/disable entries into manifests.
+- `~/.agents/skills-store/transactions` — materialization journals used by rollback.
+- `~/.agents/skills-store/logs/actions.jsonl` — append-only action log for applied mutations.
 - `~/.agents/skills` — inbox for external installers such as `npx skills add`.
 - `~/.claude/skills` — Claude rendered output.
 - `$CODEX_HOME/skills` or `~/.codex/skills` — Codex rendered output.
+- `skills-manager` — opens the TUI; if the managed store is empty, starts in first-run wizard mode.
 - `import`, `adopt`, `migrate` — copy skills into managed state.
 - `enable`, `disable` — change desired visibility in manifests.
+- `preset` — reusable snapshot/template; applying a preset mutates manifests but does not materialize and does not store live provenance.
 - `materialize` — render desired state into client directories.
 - `diff` — compare desired state to rendered filesystem state.
-- `doctor` — audit broken links, missing `SKILL.md`, conflicts, and desired-vs-actual problems.
+- `doctor` — audit broken links, missing `SKILL.md`, conflicts, unsafe targets, desired-vs-actual problems, and preset validity.
 - `rollback` — undo manager-created materialization effects from a transaction journal.
 
-The important behavioral invariant: importing a skill does not enable it. Enabling a skill does not render it. Rendering happens only through materialization.
+The important behavioral invariant: importing a skill does not enable it. Enabling a skill does not render it. Applying a preset does not render it. Rendering happens only through materialization.
 
 ## Development workflow
 
 1. Reproduce or inspect with the smallest safe command.
 2. Add or update a focused test before changing behavior when practical.
 3. Keep changes small and in the module that owns the concept.
-4. Preserve safety invariants around unmanaged directories, symlinks, transactions, and rollback.
-5. Run targeted tests, then broader validation before claiming done.
+4. Preserve safety invariants around unmanaged directories, symlinks, transactions, rollback, presets, and action logs.
+5. For TUI work, test pure helper functions; avoid brittle full-curses interaction tests unless the behavior cannot be covered another way.
+6. Run targeted tests, then broader validation before claiming done.
 
 Useful commands:
 
@@ -71,6 +86,7 @@ Useful commands:
 rtk python3 -m unittest tests/test_skills_manager.py
 rtk python3 -m compileall -q skills_manager tests
 rtk python3 bin/skills-manager --help
+rtk python3 bin/skills-manager preset --help
 rtk python3 bin/skills-manager backup --dry-run
 rtk python3 bin/skills-manager doctor
 ```
@@ -78,7 +94,7 @@ rtk python3 bin/skills-manager doctor
 For CLI smoke tests that should not touch real user state:
 
 ```bash
-rtk env SKILLS_MANAGER_HOME=/tmp/skills-manager-smoke python3 bin/skills-manager doctor
+rtk sh -c 'SKILLS_MANAGER_HOME=/tmp/skills-manager-smoke python3 bin/skills-manager doctor'
 ```
 
 Prefer `tempfile.TemporaryDirectory()` in Python tests and set `SKILLS_MANAGER_HOME` inside the test, matching the existing test style.
@@ -90,8 +106,15 @@ Prefer `tempfile.TemporaryDirectory()` in Python tests and set `SKILLS_MANAGER_H
 - Transaction journals must be written before materialization mutates rendered directories.
 - Rollback must remove only manager-created rendered entries and must not delete original source skills.
 - Backup/restore must treat rendered Claude/Codex outputs as metadata, not canonical state.
+- Backup/restore must include presets and action logs with the managed store.
 - `copy_skill_tree` and `content_hash` must ignore local junk such as `.git`, `__pycache__`, `.pytest_cache`, and `.DS_Store`.
 - Manifest writes should remain atomic via `store.write_json` and stable via sorted JSON keys.
+- Preset writes should be atomic, schema-validated, alias-resolved when mutating entries, and dry-runnable where the CLI advertises dry-run behavior.
+- Preset delete removes only the preset JSON definition; it must not remove managed skills, manifests, rendered output, transactions, or backups.
+- Preset apply supports global/project only, writes normal manifests, does not materialize, and does not create a hidden live profile/provenance system.
+- Dry-runs and TUI previews must not append to `logs/actions.jsonl`.
+- Applied mutations should append useful action-log entries without leaking secrets or environment values.
+- High-impact TUI flows such as migrate, restore, preset delete, and rollback should keep explicit confirmation semantics.
 
 ## Testing expectations
 
@@ -99,6 +122,9 @@ Prefer `tempfile.TemporaryDirectory()` in Python tests and set `SKILLS_MANAGER_H
 - Cover filesystem mutation behavior with temporary homes, not real `~/.agents`, `~/.claude`, or `~/.codex`.
 - Test both dry-run and apply paths when adding a mutating command.
 - Test conflict refusal and rollback behavior for changes near materialization.
+- Test preset schema/validation, alias drift, dry-runs, merge/replace apply behavior, and backup/restore inclusion when touching presets.
+- Test action-log presence for applied mutations and absence for dry-runs/previews when touching logging.
+- Test TUI behavior through pure helper functions and state dictionaries; keep curses rendering smoke-level.
 - Do not weaken or remove safety tests to make a run pass; fix the implementation or explain why the test contract changed.
 
 ## Style conventions
@@ -107,6 +133,7 @@ Prefer `tempfile.TemporaryDirectory()` in Python tests and set `SKILLS_MANAGER_H
 - Prefer explicit dictionaries/lists and readable `Path` operations over clever abstractions.
 - Emit machine-readable JSON for CLI commands unless an existing command already intentionally emits text.
 - Keep command names and README terminology aligned with the state model vocabulary above.
+- Keep README, `SKILL.md`, `CONTEXT.md`, and this file synchronized when changing user-visible behavior.
 - On macOS, do not use bare `sed -i`; use `perl -pi -e`, a temp-file rewrite, or an editor patch.
 - For generated scripts, start real Bash scripts with `set -euo pipefail`; do not add that to fragile one-off inspection commands.
 

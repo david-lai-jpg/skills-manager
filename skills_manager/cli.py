@@ -6,7 +6,7 @@ import json
 import sys
 from typing import Any
 
-from . import adapters, backup, materializer, planner, resolver, scanner, store, transactions
+from . import adapters, backup, materializer, planner, presets, resolver, scanner, store, transactions, tui
 
 
 def emit(data: Any, as_json: bool = True) -> int:
@@ -57,7 +57,7 @@ def cmd_enable_disable(args: argparse.Namespace, enabled: bool) -> int:
         ]
         if len(matches) == 1:
             skill_id = matches[0]
-    path = resolver.set_skill(args.scope, skill_id, enabled, client=args.client, project=args.project)
+    path = resolver.set_skill(args.scope, skill_id, enabled, client=args.client, project=args.project, surface="cli")
     return emit(
         {
             "ok": True,
@@ -73,7 +73,10 @@ def cmd_enable_disable(args: argparse.Namespace, enabled: bool) -> int:
 
 
 def cmd_materialize(args: argparse.Namespace) -> int:
-    results = {client: materializer.materialize(client, project=args.project, dry_run=args.dry_run) for client in adapters.expand_clients(args.client)}
+    results = {
+        client: materializer.materialize(client, project=args.project, dry_run=args.dry_run, surface="cli")
+        for client in adapters.expand_clients(args.client)
+    }
     ok = all(result.get("ok") for result in results.values())
     emit(results, True)
     return 0 if ok else 1
@@ -97,6 +100,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         d = materializer.diff(client, project=args.project)
         for conflict in d["conflicts"]:
             issues.append({"location": f"{client}_rendered", "type": "conflict", **conflict})
+    issues.extend(presets.validate_presets())
     data = {"ok": not issues, "issues": issues, "store": str(store.store_root()), "inbox": str(store.inbox_dir())}
     emit(data, True)
     return 0 if data["ok"] else 1
@@ -120,9 +124,72 @@ def cmd_restore(args: argparse.Namespace) -> int:
     return 0 if data.get("ok") else 1
 
 
+def cmd_preset_list(args: argparse.Namespace) -> int:
+    return emit(presets.list_presets(), True)
+
+
+def cmd_preset_show(args: argparse.Namespace) -> int:
+    return emit(presets.show_preset(args.name), True)
+
+
+def cmd_preset_create(args: argparse.Namespace) -> int:
+    if args.from_scope:
+        return emit(
+            presets.capture_preset(
+                args.name,
+                args.from_scope,
+                project=args.project,
+                description=args.description or "",
+                tags=args.tag,
+                dry_run=args.dry_run,
+                surface="cli",
+            ),
+            True,
+        )
+    return emit(presets.create_preset(args.name, description=args.description or "", tags=args.tag, dry_run=args.dry_run, surface="cli"), True)
+
+
+def cmd_preset_add(args: argparse.Namespace) -> int:
+    data = presets.add_entries(args.name, args.skills, mode=args.mode, dry_run=args.dry_run, surface="cli")
+    emit(data, True)
+    return 0 if data.get("ok") else 1
+
+
+def cmd_preset_remove(args: argparse.Namespace) -> int:
+    data = presets.remove_entries(args.name, args.skills, mode=args.mode, dry_run=args.dry_run, surface="cli")
+    emit(data, True)
+    return 0 if data.get("ok") else 1
+
+
+def cmd_preset_rename(args: argparse.Namespace) -> int:
+    data = presets.rename_preset(args.old_name, args.new_name, apply=args.apply, surface="cli")
+    emit(data, True)
+    return 0 if data.get("ok") else 1
+
+
+def cmd_preset_delete(args: argparse.Namespace) -> int:
+    data = presets.delete_preset(args.name, apply=args.apply, surface="cli")
+    emit(data, True)
+    return 0 if data.get("ok") else 1
+
+
+def cmd_preset_apply(args: argparse.Namespace) -> int:
+    data = presets.apply_preset(
+        args.name,
+        args.scope,
+        project=args.project,
+        client=args.client,
+        replace=args.replace,
+        dry_run=args.dry_run,
+        surface="cli",
+    )
+    emit(data, True)
+    return 0 if data.get("ok") else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="skills-manager", description="CLI-first Agent Skill manager")
-    sub = p.add_subparsers(dest="command", required=True)
+    p = argparse.ArgumentParser(prog="skills-manager", description="Agent Skill manager")
+    sub = p.add_subparsers(dest="command")
 
     s = sub.add_parser("scan")
     s.add_argument("--json", action="store_true")
@@ -152,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, enabled in (("enable", True), ("disable", False)):
         s = sub.add_parser(name)
         s.add_argument("skill")
-        s.add_argument("--scope", choices=["global", "project", "session", "profile"], required=True)
+        s.add_argument("--scope", choices=["global", "project", "session"], required=True)
         s.add_argument("--client", choices=["claude", "codex", "all"], default="all")
         s.add_argument("--project")
         s.set_defaults(func=lambda args, enabled=enabled: cmd_enable_disable(args, enabled))
@@ -187,12 +254,59 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--dry-run", action="store_true")
     group.add_argument("--apply", action="store_true")
     s.set_defaults(func=cmd_restore)
+
+    s = sub.add_parser("preset")
+    preset_sub = s.add_subparsers(dest="preset_command", required=True)
+    ps = preset_sub.add_parser("list")
+    ps.set_defaults(func=cmd_preset_list)
+    ps = preset_sub.add_parser("show")
+    ps.add_argument("name")
+    ps.set_defaults(func=cmd_preset_show)
+    ps = preset_sub.add_parser("create")
+    ps.add_argument("name")
+    ps.add_argument("--description")
+    ps.add_argument("--tag", action="append", default=[])
+    ps.add_argument("--dry-run", action="store_true")
+    ps.add_argument("--from-scope", choices=["global", "project"])
+    ps.add_argument("--project")
+    ps.set_defaults(func=cmd_preset_create)
+    ps = preset_sub.add_parser("add")
+    ps.add_argument("name")
+    ps.add_argument("skills", nargs="+")
+    ps.add_argument("--mode", choices=["enable", "disable"], default="enable")
+    ps.add_argument("--dry-run", action="store_true")
+    ps.set_defaults(func=cmd_preset_add)
+    ps = preset_sub.add_parser("remove")
+    ps.add_argument("name")
+    ps.add_argument("skills", nargs="+")
+    ps.add_argument("--mode", choices=["enable", "disable"], default="enable")
+    ps.add_argument("--dry-run", action="store_true")
+    ps.set_defaults(func=cmd_preset_remove)
+    ps = preset_sub.add_parser("rename")
+    ps.add_argument("old_name")
+    ps.add_argument("new_name")
+    ps.add_argument("--apply", action="store_true")
+    ps.set_defaults(func=cmd_preset_rename)
+    ps = preset_sub.add_parser("delete")
+    ps.add_argument("name")
+    ps.add_argument("--apply", action="store_true")
+    ps.set_defaults(func=cmd_preset_delete)
+    ps = preset_sub.add_parser("apply")
+    ps.add_argument("name")
+    ps.add_argument("--scope", choices=["global", "project"], required=True)
+    ps.add_argument("--project")
+    ps.add_argument("--client", choices=["claude", "codex", "all"], default="all")
+    ps.add_argument("--replace", action="store_true")
+    ps.add_argument("--dry-run", action="store_true")
+    ps.set_defaults(func=cmd_preset_apply)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command is None:
+        return tui.run()
     try:
         return args.func(args)
     except BrokenPipeError:
