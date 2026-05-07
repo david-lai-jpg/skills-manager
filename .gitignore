@@ -54,3 +54,6 @@ agent-skills-backup/
 # Do not commit local test scratch dirs if created manually
 tmp/
 temp/
+
+tasks/
+.omx/
