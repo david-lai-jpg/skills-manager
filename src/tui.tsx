@@ -92,6 +92,8 @@ export type ChoiceOption = {
   description?: string;
 };
 
+type TuiActionItem = { value: TuiAction; name: string; description: string };
+
 export function tuiActionCoverage(): string[] {
   return TUI_ACTIONS.map((action) => action.value).filter((value) => value !== "quit").sort();
 }
@@ -202,6 +204,23 @@ export function choiceWindow<T>(items: T[], selectedIndex: number, height = 12):
   const half = Math.floor(height / 2);
   const start = Math.min(Math.max(0, selectedIndex - half), Math.max(0, items.length - height));
   return items.slice(start, start + height).map((item, offset) => ({ item, index: start + offset }));
+}
+
+export function filterTuiActions(actions: TuiActionItem[], query: string): TuiActionItem[] {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    return actions;
+  }
+  return actions.filter((action) => [action.value, action.name, action.description].join(" ").toLowerCase().includes(q));
+}
+
+export function outputLines(output: string, query = ""): string[] {
+  const lines = output.split("\n");
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    return lines;
+  }
+  return lines.filter((line) => line.toLowerCase().includes(q));
 }
 
 export function promptsForAction(action: TuiAction): Prompt[] {
@@ -464,7 +483,10 @@ function nextPromptIndex(prompts: Prompt[], start: number, answers: Answers): nu
 }
 
 export function visibleOutput(output: string, offset: number, height = 18): string[] {
-  const lines = output.split("\n");
+  return outputLines(output).slice(offset, offset + height);
+}
+
+export function visibleOutputLines(lines: string[], offset: number, height = 18): string[] {
   return lines.slice(offset, offset + height);
 }
 
@@ -668,6 +690,10 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
   const [inputValue, setInputValue] = useState("");
   const [selectIndex, setSelectIndex] = useState(0);
   const [output, setOutput] = useState("");
+  const [menuQuery, setMenuQuery] = useState("");
+  const [menuFilterActive, setMenuFilterActive] = useState(false);
+  const [outputQuery, setOutputQuery] = useState("");
+  const [outputFilterActive, setOutputFilterActive] = useState(false);
   const [scroll, setScroll] = useState(0);
   const [hint, setHint] = useState("");
   const [firstRunHint, setFirstRunHint] = useState("");
@@ -678,6 +704,8 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
 
   const prompts = useMemo(() => promptsForAction(activeAction), [activeAction]);
   const currentPrompt = prompts[promptIndex];
+  const filteredMenuActions = useMemo(() => filterTuiActions(TUI_ACTIONS, menuQuery), [menuQuery]);
+  const currentOutputLines = useMemo(() => outputLines(output, outputQuery), [output, outputQuery]);
   const filteredChoices = useMemo(
     () => (currentPrompt && isChoicePrompt(currentPrompt) ? filterChoiceOptions(choiceOptions, choiceQuery) : []),
     [choiceOptions, choiceQuery, currentPrompt]
@@ -741,6 +769,22 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     setSelectIndex((value) => Math.min(value, filteredChoices.length - 1));
   }, [filteredChoices.length]);
 
+  useEffect(() => {
+    if (filteredMenuActions.length === 0) {
+      setMenuIndex(0);
+      return;
+    }
+    setMenuIndex((value) => Math.min(value, filteredMenuActions.length - 1));
+  }, [filteredMenuActions.length]);
+
+  useEffect(() => {
+    if (currentOutputLines.length === 0) {
+      setScroll(0);
+      return;
+    }
+    setScroll((value) => Math.min(value, currentOutputLines.length - 1));
+  }, [currentOutputLines.length]);
+
   function resetMenu(): void {
     setScreen("menu");
     setPromptIndex(0);
@@ -749,6 +793,8 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     setSelectIndex(0);
     setChoiceQuery("");
     setChoiceSelected([]);
+    setOutputFilterActive(false);
+    setOutputQuery("");
     setHint("");
   }
 
@@ -763,6 +809,8 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
       setOutput(formatTuiOutput(action, result));
     }
     setScroll(0);
+    setOutputQuery("");
+    setOutputFilterActive(false);
     setScreen("output");
   }
 
@@ -779,6 +827,8 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     setChoiceQuery("");
     setChoiceSelected([]);
     setChoiceOptions([]);
+    setOutputFilterActive(false);
+    setOutputQuery("");
     if (nextPrompts.length === 0) {
       void runSelected(action, {});
       return;
@@ -835,14 +885,41 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
       return;
     }
     if (screen === "menu") {
-      if (input === "q") {
+      if (menuFilterActive) {
+        if (key.escape) {
+          setMenuFilterActive(false);
+          setMenuQuery("");
+        } else if (key.backspace || key.delete) {
+          setMenuQuery((value) => value.slice(0, -1));
+          setMenuIndex(0);
+        } else if (key.upArrow || input === "k") {
+          setMenuIndex((value) => Math.max(0, value - 1));
+        } else if (key.downArrow || input === "j") {
+          setMenuIndex((value) => Math.min(Math.max(0, filteredMenuActions.length - 1), value + 1));
+        } else if (key.return) {
+          const action = filteredMenuActions[menuIndex];
+          if (action) {
+            startAction(action.value);
+          }
+        } else if (input && !key.ctrl && !key.meta) {
+          setMenuQuery((value) => value + input);
+          setMenuIndex(0);
+        }
+      } else if (input === "/") {
+        setMenuFilterActive(true);
+        setMenuQuery("");
+        setMenuIndex(0);
+      } else if (input === "q") {
         exit();
       } else if (key.upArrow || input === "k") {
         setMenuIndex((value) => Math.max(0, value - 1));
       } else if (key.downArrow || input === "j") {
-        setMenuIndex((value) => Math.min(TUI_ACTIONS.length - 1, value + 1));
+        setMenuIndex((value) => Math.min(Math.max(0, filteredMenuActions.length - 1), value + 1));
       } else if (key.return) {
-        startAction(TUI_ACTIONS[menuIndex]!.value);
+        const action = filteredMenuActions[menuIndex];
+        if (action) {
+          startAction(action.value);
+        }
       }
       return;
     }
@@ -921,37 +998,65 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
       return;
     }
     if (screen === "output") {
-      if (input === "q" || key.escape || key.return) {
+      if (outputFilterActive) {
+        if (key.escape) {
+          setOutputFilterActive(false);
+          setOutputQuery("");
+          setScroll(0);
+        } else if (key.backspace || key.delete) {
+          setOutputQuery((value) => value.slice(0, -1));
+          setScroll(0);
+        } else if (key.return) {
+          setOutputFilterActive(false);
+        } else if (input && !key.ctrl && !key.meta) {
+          setOutputQuery((value) => value + input);
+          setScroll(0);
+        }
+      } else if (input === "/") {
+        setOutputFilterActive(true);
+        setOutputQuery("");
+        setScroll(0);
+      } else if (input === "q" || key.escape || key.return) {
         resetMenu();
+      } else if (input === "g") {
+        setScroll(0);
+      } else if (input === "G") {
+        setScroll(Math.max(0, currentOutputLines.length - 1));
       } else if (key.upArrow || input === "k") {
         setScroll((value) => Math.max(0, value - 1));
       } else if (key.downArrow || input === "j") {
-        const total = output.split("\n").length;
+        const total = currentOutputLines.length;
         setScroll((value) => Math.min(Math.max(0, total - 1), value + 1));
       } else if (key.pageUp) {
         setScroll((value) => Math.max(0, value - 10));
       } else if (key.pageDown) {
-        const total = output.split("\n").length;
+        const total = currentOutputLines.length;
         setScroll((value) => Math.min(Math.max(0, total - 1), value + 10));
       }
     }
   });
 
-  const selected = TUI_ACTIONS[menuIndex]!;
+  const selected = filteredMenuActions[menuIndex];
 
   return (
     <Box flexDirection="column" paddingX={1}>
       <Text bold color="cyan">skills-manager</Text>
-      <Text dimColor>Ink React TUI · arrows navigate · enter selects · esc/back returns · q quits</Text>
+      <Text dimColor>Ink React TUI · arrows navigate · / filters · enter selects · esc/back returns · q quits</Text>
       {screen === "menu" && (
         <Box flexDirection="column" marginTop={1}>
-          {TUI_ACTIONS.map((item, index) => (
+          <Text>
+            filter: {menuFilterActive || menuQuery ? menuQuery : "none"}
+            {menuFilterActive ? <Text color="yellow">█</Text> : null}
+            <Text dimColor> · {filteredMenuActions.length}/{TUI_ACTIONS.length} actions · / filters · esc clears</Text>
+          </Text>
+          {filteredMenuActions.map((item, index) => (
             <Text key={item.value} color={index === menuIndex ? "yellow" : "white"}>
               {index === menuIndex ? "› " : "  "}{item.name}
             </Text>
           ))}
+          {filteredMenuActions.length === 0 ? <Text color="red">No matching actions.</Text> : null}
           <Box marginTop={1} flexDirection="column">
-            <Text color="cyan">{selected.description}</Text>
+            {selected ? <Text color="cyan">{selected.description}</Text> : null}
             {firstRunHint ? <Text color="yellow">{firstRunHint}</Text> : null}
             <Text dimColor>This TUI calls the TypeScript core directly; no CLI memorization.</Text>
           </Box>
@@ -997,9 +1102,15 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
       {screen === "output" && (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>{TUI_ACTIONS.find((item) => item.value === activeAction)?.name} result</Text>
-          <Text dimColor>up/down/page scroll · enter/esc/q returns</Text>
+          <Text dimColor>up/down/page/g/G scroll · / filters lines · enter/esc/q returns</Text>
+          <Text>
+            filter: {outputFilterActive || outputQuery ? outputQuery : "none"}
+            {outputFilterActive ? <Text color="yellow">█</Text> : null}
+            <Text dimColor> · {currentOutputLines.length}/{output.split("\n").length} lines</Text>
+          </Text>
           <Box flexDirection="column" marginTop={1}>
-            {visibleOutput(output, scroll).map((line, index) => <Text key={`${scroll}-${index}`}>{line || " "}</Text>)}
+            {visibleOutputLines(currentOutputLines, scroll).map((line, index) => <Text key={`${scroll}-${index}`}>{line || " "}</Text>)}
+            {currentOutputLines.length === 0 ? <Text color="red">No matching output lines.</Text> : null}
           </Box>
         </Box>
       )}

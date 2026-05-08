@@ -95,12 +95,14 @@ V1 TUI facts:
 - Empty-store users see the guided scan → backup/pre-migration-backup → import/migrate → enable/preset → materialize → doctor path directly in the menu.
 - Skill and preset prompts use searchable option lists for enable/disable, preset show/add/remove/rename/delete/apply, and similar selection-heavy flows.
 - Preset add/remove skill prompts and preset delete prompts support multi-select batch operations with space toggles.
-- Output panes scroll with arrow keys, `j`/`k`, and PageUp/PageDown.
+- Action menu and output panes support focused `/` filters.
+- Output panes scroll with arrow keys, `j`/`k`, PageUp/PageDown, `g`, and `G`.
 - Result panes start with a compact human summary and keep the full deterministic JSON below it.
 
 Current global keys/behaviors:
 
 - arrows or `j`/`k` navigate menus, select prompts, and output panes.
+- `/` focuses action-menu and output-line filters.
 - enter selects the highlighted action or submits the current prompt.
 - searchable select prompts filter as the user types.
 - multi-select prompts use space to toggle the highlighted item, then enter to continue.
@@ -113,7 +115,7 @@ Current global keys/behaviors:
 Deferred TUI UX backlog:
 
 - true first-run wizard with staged setup transitions
-- `/` filtering/search across action menus, scan results, doctor issues, and transactions
+- structured filtering/search across scan result records, doctor issues, and transactions
 - richer managed-skills dashboards instead of only action-driven forms
 - client tabs/modes beyond current prompt-driven `all`/`claude`/`codex` selection
 - incompatible-skill visibility toggles

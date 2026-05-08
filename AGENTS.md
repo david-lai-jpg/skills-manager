@@ -46,7 +46,7 @@ Do not treat rendered client skill directories as source. The source of truth is
 - `src/core/transactions.ts` writes materialization journals and rolls back manager-created render changes.
 - `src/core/action-log.ts` appends JSONL records for applied CLI/core mutations. Dry-runs and previews do not log.
 - `src/core/backup.ts` exports/restores the managed store, manifests, transactions, presets, logs, and inbox; rendered client directories are metadata-only in regular backups. `pre-migration-backup` is the separate raw-copy escape hatch for `~/.claude/skills`, `$CODEX_HOME/skills`/`~/.codex/skills`, and `~/.agents/skills`.
-- `src/tui.tsx` owns the Ink React TUI. It exposes every CLI capability through direct core-module calls, searchable skill/preset selection prompts, batch multi-select where actions support multiple targets, typed confirmations for high-impact actions, scrollable output panes, and human-readable result summaries above full JSON. Keep business rules in core modules where practical; keep Ink rendering thin and test action/prompt/execution helpers directly.
+- `src/tui.tsx` owns the Ink React TUI. It exposes every CLI capability through direct core-module calls, searchable skill/preset selection prompts, batch multi-select where actions support multiple targets, focused action/output filters, typed confirmations for high-impact actions, scrollable output panes, and human-readable result summaries above full JSON. Keep business rules in core modules where practical; keep Ink rendering thin and test action/prompt/execution helpers directly.
 - `src/cli.ts` is the Commander boundary. Bare invocation launches the TUI; subcommands expose automation. Keep business rules in modules, not buried in CLI handlers.
 
 ## State model vocabulary

@@ -361,6 +361,7 @@ second state system and it does not shell out to another CLI.
 Keyboard controls are intentionally plain:
 
 - arrow keys or `j`/`k` move through menus, select prompts, and output panes
+- `/` focuses filters in the action menu and output panes
 - enter chooses the highlighted action or submits the current prompt
 - skill and preset prompts use searchable option lists instead of forcing you to
   memorize IDs
@@ -369,7 +370,7 @@ Keyboard controls are intentionally plain:
 - `y`/`n` answer simple confirmations
 - high-impact apply/export flows require typing the exact shown word
 - escape cancels a prompt
-- output screens scroll with arrow keys, `j`/`k`, and PageUp/PageDown
+- output screens scroll with arrow keys, `j`/`k`, PageUp/PageDown, `g`, and `G`
 - enter, escape, or `q` returns from output to the menu
 - `q` quits from the main menu
 
@@ -392,6 +393,7 @@ Current TUI-backed workflows cover:
   metadata only, plus raw pre-migration backup export
 - readable summaries plus full scrollable JSON for large scan, migrate, diff,
   materialize, doctor, backup, pre-migration-backup, restore, and preset results
+- action-menu filtering and output-line filtering for long menus/results
 - a coverage-backed TUI action catalog for every CLI capability: scan, import,
   adopt, migrate, state, enable, disable, materialize, diff, doctor, rollback,
   backup, pre-migration-backup, restore, and all preset subcommands

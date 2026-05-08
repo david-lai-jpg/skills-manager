@@ -9,13 +9,16 @@ import {
   choiceWindow,
   executeTuiAction,
   filterChoiceOptions,
+  filterTuiActions,
+  outputLines,
   SkillsManagerApp,
   TUI_ACTIONS,
   formatTuiOutput,
   promptsForAction,
   summarizeTuiResult,
   tuiActionCoverage,
-  visibleOutput
+  visibleOutput,
+  visibleOutputLines
 } from "./tui.js";
 
 async function settle(): Promise<void> {
@@ -142,6 +145,12 @@ test("TUI searchable choice helpers filter options and keep the active row visib
   ]);
 });
 
+test("TUI menu and output filter helpers narrow noisy lists without dropping scroll support", () => {
+  assert.deepEqual(filterTuiActions(TUI_ACTIONS, "backup").map((action) => action.value), ["backup", "pre-migration-backup", "restore"]);
+  assert.deepEqual(outputLines("Summary\nFull JSON\n  \"backup\": true", "json"), ["Full JSON"]);
+  assert.deepEqual(visibleOutputLines(["a", "b", "c", "d"], 2, 2), ["c", "d"]);
+});
+
 test("TUI preset mutations accept multi-selected skill and preset values", async () => {
   await withTempHome("sm-ink-multi-", async (home) => {
     await writeManagedSkill(home, "skill.example.alpha", "alpha");
@@ -265,4 +274,54 @@ test("Ink TUI output panes scroll instead of truncating all content away", async
       process.env.SKILLS_MANAGER_HOME = oldHome;
     }
   }
+});
+
+test("Ink TUI action menu supports focused filtering", async () => {
+  const instance = render(createElement(SkillsManagerApp));
+  try {
+    instance.stdin.write("/");
+    await settle();
+    instance.stdin.write("rollback");
+    const frame = stripAnsi(await waitForFrame(instance, /1\/24 actions/));
+    assert.match(frame, /filter: rollback/);
+    assert.match(frame, /Rollback transaction/);
+    assert.doesNotMatch(frame, /Scan skill locations/);
+  } finally {
+    instance.cleanup();
+  }
+});
+
+test("Ink TUI output panes support line filtering and top/bottom navigation", async () => {
+  await withTempHome("sm-ink-output-filter-", async () => {
+    const instance = render(createElement(SkillsManagerApp));
+    try {
+      instance.stdin.write("\r");
+      await settle();
+      instance.stdin.write("\r");
+      await settle();
+      instance.stdin.write("\r");
+      await settle();
+      await waitForFrame(instance, /Scan skill locations result/);
+
+      instance.stdin.write("/");
+      await settle();
+      instance.stdin.write("Full JSON");
+      const filteredFrame = stripAnsi(await waitForFrame(instance, /filter: Full JSON/));
+      assert.match(filteredFrame, /1\/\d+ lines/);
+      assert.match(filteredFrame, /Full JSON/);
+      assert.doesNotMatch(filteredFrame, /Summary\n- /);
+
+      instance.stdin.write("\u001b");
+      await settle();
+      instance.stdin.write("G");
+      await settle();
+      const bottomFrame = instance.lastFrame() ?? "";
+      instance.stdin.write("g");
+      await settle();
+      const topFrame = instance.lastFrame() ?? "";
+      assert.notEqual(bottomFrame, topFrame);
+    } finally {
+      instance.cleanup();
+    }
+  });
 });
