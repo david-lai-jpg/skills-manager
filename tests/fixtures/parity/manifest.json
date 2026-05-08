@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "purpose": "Compatibility contract for the Node/TypeScript runtime.",
+  "commands": [
+    "scan",
+    "import",
+    "adopt",
+    "migrate",
+    "state",
+    "enable",
+    "disable",
+    "materialize",
+    "diff",
+    "doctor",
+    "rollback",
+    "backup",
+    "restore",
+    "preset list",
+    "preset show",
+    "preset create",
+    "preset add",
+    "preset remove",
+    "preset rename",
+    "preset delete",
+    "preset apply",
+    "bare tui"
+  ],
+  "scenarios": [
+    {
+      "id": "empty-home",
+      "description": "No managed store yet; bare command should start first-run mode and scans should be empty.",
+      "covers": ["scan", "doctor", "bare tui"]
+    },
+    {
+      "id": "inbox-import",
+      "description": "Inbox contains unmanaged skills ready for import; import dry-run writes nothing and import apply does not enable.",
+      "covers": ["scan", "import"]
+    },
+    {
+      "id": "adopt-enable-materialize",
+      "description": "External skill can be adopted, enabled in desired state, diffed, and materialized.",
+      "covers": ["adopt", "state", "enable", "materialize", "diff"]
+    },
+    {
+      "id": "migrate-merge-fork",
+      "description": "Existing Claude/Codex rendered skills include identical merge candidates and same-name different-content fork candidates.",
+      "covers": ["migrate", "scan"]
+    },
+    {
+      "id": "project-session-manifests",
+      "description": "Global/project/session manifests exercise disable-mask precedence and client-specific enable/disable buckets.",
+      "covers": ["state", "enable", "disable"]
+    },
+    {
+      "id": "unmanaged-conflict",
+      "description": "Rendered target has an unmanaged real directory that materialize and rollback must not overwrite/remove.",
+      "covers": ["materialize", "diff", "doctor"]
+    },
+    {
+      "id": "broken-symlink",
+      "description": "Skill-looking location has a broken symlink and must be diagnosed instead of blindly removed.",
+      "covers": ["scan", "doctor"]
+    },
+    {
+      "id": "missing-skill-md",
+      "description": "Candidate directories missing SKILL.md are reported and cannot be adopted as valid skills.",
+      "covers": ["scan", "adopt", "doctor"]
+    },
+    {
+      "id": "symlink-fallback-copy",
+      "description": "Materialize symlink failure falls back to a manager-marked copy that rollback can safely remove.",
+      "covers": ["materialize", "rollback"]
+    },
+    {
+      "id": "rollback-after-failure",
+      "description": "Partial materialization journal remains doctor/rollback-compatible across runtimes.",
+      "covers": ["materialize", "doctor", "rollback"]
+    },
+    {
+      "id": "backup-restore-rendered-metadata",
+      "description": "Backup includes canonical managed state and rendered-output metadata only; restore does not materialize.",
+      "covers": ["backup", "restore", "doctor"]
+    },
+    {
+      "id": "preset-crud-apply",
+      "description": "Preset create/show/list/add/remove/rename/delete/apply flows mutate only preset JSON or manifests as documented.",
+      "covers": [
+        "preset list",
+        "preset show",
+        "preset create",
+        "preset add",
+        "preset remove",
+        "preset rename",
+        "preset delete",
+        "preset apply"
+      ]
+    },
+    {
+      "id": "preset-alias-drift",
+      "description": "Preset entries whose aliases drift from managed metadata remain inspectable and doctorable.",
+      "covers": ["preset show", "doctor"]
+    },
+    {
+      "id": "preset-unknown-id",
+      "description": "Preset apply with unknown managed IDs fails atomically before manifest mutation.",
+      "covers": ["preset add", "preset apply"]
+    },
+    {
+      "id": "malformed-doctorable-preset",
+      "description": "Malformed preset files are reported by doctor without preventing unrelated preset inspection.",
+      "covers": ["preset list", "doctor"]
+    },
+    {
+      "id": "action-log-dry-run",
+      "description": "Dry-runs and previews never append logs; applied mutations append safe metadata only.",
+      "covers": ["import", "migrate", "materialize", "preset create", "preset add", "preset apply"]
+    }
+  ]
+}

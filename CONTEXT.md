@@ -5,7 +5,7 @@ Use these terms when writing PRDs, issues, plans, tests, docs, or implementation
 
 ## Mission
 
-`skills-manager` is a dependency-light Python tool for managing Claude and Codex Agent Skills through one canonical managed store.
+`skills-manager` is a TypeScript/pnpm tool for managing Claude and Codex Agent Skills through one canonical managed store. The TypeScript runtime owns the human-facing Ink React TUI and checked-out CLI wrapper.
 
 The product direction is now:
 
@@ -13,6 +13,7 @@ The product direction is now:
 - **CLI retained for automation/plumbing**
 - **Core modules own behavior**
 - **Rendered client skill directories are never source of truth**
+- **TypeScript/Ink is the human-facing runtime**
 
 The tool should help users manage skills without memorizing a pile of subcommands and flags.
 
@@ -22,7 +23,7 @@ Use these terms consistently:
 
 - **Managed store**: canonical source of truth under `~/.agents/skills-store`.
 - **Managed skills**: copied skill directories stored under the managed store.
-- **Managed skill ID**: an ID invented by `skills-manager`, such as `skill.davidl.prompt-engineer`.
+- **Managed skill ID**: an ID invented by `skills-manager`, such as `skill.<owner>.prompt-engineer`.
   Upstream skills do not have native IDs; they are just directories containing `SKILL.md`.
 - **Alias**: rendered/user-facing skill name, usually derived from the source directory name.
 - **Manifest**: desired-state JSON for a scope.
@@ -78,87 +79,88 @@ The TUI is not a preset-only editor. It must cover the full feature surface:
 - restore
 - rollback
 
-## TUI Design Decisions
+## Current TUI Implementation Facts
 
-V1 TUI decisions:
+V1 TUI facts:
 
-- Full-screen `curses` app.
-- Stdlib-only; no Textual/Rich dependency unless explicitly approved later.
-- Keyboard-only for v1.
-- No mouse support in v1.
-- Bare `skills-manager` launches TUI.
+- Ink React app using the explicitly approved Node dependency set.
+- Keyboard-only for v1; no mouse support.
+- Bare `skills-manager` launches the TUI.
 - Subcommands remain automation plumbing.
-- TUI calls core modules directly; it should not shell out to its own CLI.
-- Business rules must live in core modules, not in TUI rendering code.
-- TUI rendering should be thin; state/navigation helpers should be testable without curses.
+- TUI calls core modules directly; it does not shell out to its own CLI.
+- Business rules live in core modules, not in TUI rendering code.
+- TUI rendering stays thin; action coverage, prompt definitions, execution helpers, output summaries, and light Ink render behavior are test-covered.
+- Every CLI capability is present in the TUI action catalog: scan, import, adopt, migrate, state, enable, disable, diff, materialize, doctor, rollback, backup, restore, and all preset subcommands.
+- Empty-store users see the guided scan → backup → import/migrate → enable/preset → materialize → doctor path directly in the menu.
+- Output panes scroll with arrow keys, `j`/`k`, and PageUp/PageDown.
+- Result panes start with a compact human summary and keep the full deterministic JSON below it.
 
-Recommended top-level sections:
+Current global keys/behaviors:
 
-- First-run wizard / setup
-- Managed skills
-- Presets
-- Global configuration
-- Project configuration
-- Diff
-- Materialize
-- Doctor
-- Backup / restore
-- Rollback / transactions
-- Action log
+- arrows or `j`/`k` navigate menus, select prompts, and output panes.
+- enter selects the highlighted action or submits the current prompt.
+- `y`/`n` answer simple confirmations.
+- typed-confirm prompts require the exact shown word; blank keeps preview/cancel behavior.
+- escape cancels prompts.
+- enter, escape, or `q` returns from output to the menu.
+- `q` quits from the main menu.
 
-Global keys/behaviors:
+Deferred TUI UX backlog:
 
-- `/` filters the current list.
-- Search/filter should work across skills, presets, scan results, doctor issues, transactions, and other lists.
-- Client views should use tabs/modes: `all`, `claude`, `codex`.
-- Incompatible skills are hidden by default with a toggle to show them.
-- TUI should display equivalent CLI commands for selected actions.
-- TUI should show a needs-materialize banner after desired-state changes.
-- TUI should offer preview/materialize from that banner.
+- true first-run wizard with staged setup transitions
+- `/` filtering/search across action menus, skills, presets, scan results, doctor issues, and transactions
+- richer managed-skills dashboards instead of only action-driven forms
+- client tabs/modes beyond current prompt-driven `all`/`claude`/`codex` selection
+- incompatible-skill visibility toggles
+- equivalent CLI command display for selected actions
+- needs-materialize banner after desired-state changes
+- preview/materialize shortcut from that banner
+- optional auto-doctor after high-impact operations
 
-## First-Run Wizard Decisions
+## First-Run Guidance Decisions
 
-If the managed store is empty or uninitialized, bare `skills-manager` should open a first-run wizard automatically.
-
-The wizard should:
+The current TUI does not yet implement a multi-screen wizard. Instead, when the
+managed store is empty, it shows the intended first-run path in-product:
 
 1. Scan existing inbox, Claude, and Codex skill locations.
-2. Show unmanaged skills and migration candidates.
-3. Recommend/offer backup before migration/materialization.
-4. Preview import/migration actions before applying.
-5. Let the user pick initial global skills or presets.
+2. Preview/export a backup if needed.
+3. Preview import/migration actions before applying.
+4. Apply the chosen intake action with typed confirmation.
+5. Enable initial global skills or apply a preset.
 6. Preview materialization.
-7. Apply materialization only after confirmation.
-8. Auto-run doctor after completion.
-9. Open the normal dashboard.
+7. Apply materialization only after typed confirmation.
+8. Run doctor.
+
+A future wizard should automate this flow without changing the state model.
 
 ## Mutation Safety Decisions
 
-All TUI mutating operations must show preview/dry-run first and require confirmation.
+TUI mutating operations should prefer preview/dry-run first and require
+confirmation where practical.
 
-Normal actions use single-key confirmation after preview:
+Simple actions may use single-key confirmation:
 
 - enable/disable
-- preset add/remove
-- materialize after preview
+- preset add/remove/create/capture
 
-High-risk actions require typing an exact action word:
+High-risk apply/export actions require typing an exact action word:
 
+- import apply
+- backup export
+- materialize apply
 - restore
 - rollback
 - preset delete
-- preset apply with replace
+- preset apply
+- preset rename
 - migrate apply
 
 The TUI writes confirmed enable/disable and similar edits immediately.
 There is no staged dirty buffer in v1.
 
-After high-impact operations, the TUI auto-runs doctor:
-
-- materialize
-- restore
-- migrate
-- first-run completion
+Auto-running doctor after high-impact operations is deferred. Current behavior
+keeps doctor as an explicit TUI/CLI action after materialize, restore, migrate,
+or first-run setup.
 
 V1 has no generic undo beyond existing materialization rollback and action-log-assisted recovery.
 
@@ -235,7 +237,7 @@ Example shape:
   "tags": ["frontend", "javascript"],
   "enable": [
     {
-      "id": "skill.davidl.prompt-engineer",
+      "id": "skill.<owner>.prompt-engineer",
       "alias": "prompt-engineer"
     }
   ],
@@ -396,9 +398,9 @@ Until such a wrapper exists, v1 should focus on global/project presets.
 
 ## Testing Strategy
 
-Behavior changes need tests in the stdlib `unittest` suite.
+Behavior changes need tests in the Node test suite.
 
-Test core behavior, not curses rendering details.
+Test core behavior and TUI contracts, not terminal escape-sequence details.
 
 Preset core tests should cover:
 
@@ -431,17 +433,19 @@ Backup/restore tests should prove presets are exported/restored as managed state
 
 Action-log tests should prove applied core mutations log and dry-runs do not.
 
-TUI tests should target pure helpers:
+TUI tests should target pure helpers and light Ink render smoke tests:
 
-- selection movement
-- filtering
-- client mode switching
-- incompatible-skill toggle
-- first-run wizard transitions
-- confirmation classification
-- needs-materialize flag behavior
+- action catalog coverage against the CLI capability surface
+- prompt definitions and confirmation classification
+- typed-confirm safety for high-impact actions
+- empty-store first-run guidance
+- output scrolling
+- human-readable result summaries above full JSON
+- focused stdin-driven interaction paths when pure-helper coverage is not enough
 
-Avoid brittle full curses interaction tests.
+Future TUI tests should cover filtering, client mode switching, incompatible-skill toggles, first-run wizard transitions, and needs-materialize banner behavior when those features are implemented.
+
+Avoid brittle full-terminal interaction tests.
 
 ## Related Issue
 

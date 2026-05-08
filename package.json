@@ -1,0 +1,36 @@
+{
+  "name": "skills-manager",
+  "version": "0.0.0-port-alpha",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "description": "TUI-first Agent Skill manager for Claude and Codex.",
+  "type": "module",
+  "bin": {
+    "skills-manager": "./bin/skills-manager",
+    "skills-manager-ts": "./bin/skills-manager-ts"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "test": "node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "dotenv": "^17.4.2",
+    "ink": "^7.0.2",
+    "picocolors": "^1.1.1",
+    "react": "^19.2.6",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
+    "ink-testing-library": "^4.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

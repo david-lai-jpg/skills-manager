@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ ! -f "$ROOT/dist/cli.js" ]; then
+  if ! command -v pnpm >/dev/null 2>&1; then
+    printf '%s\n' "skills-manager-ts: dist/cli.js is missing and pnpm is not available to build it." >&2
+    printf '%s\n' "Run: pnpm run build" >&2
+    exit 1
+  fi
+  (cd "$ROOT" && pnpm run build >/dev/null)
+fi
+
+exec node "$ROOT/dist/cli.js" "$@"

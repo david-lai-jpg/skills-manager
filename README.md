@@ -5,10 +5,14 @@ TUI-first Agent Skill manager for Claude and Codex.
 It gives you one managed skill store and renders selected skills into each
 client’s real skill directory.
 
-No MCP. No runtime dependencies. No hidden database. It is plain files and
-careful filesystem plumbing.
+No MCP. No hidden database. It is plain files and careful filesystem plumbing.
+The TypeScript runtime uses the approved small CLI/TUI dependency set in
+`package.json`.
 
-Run the bare command for the keyboard-only stdlib curses control panel:
+> Runtime note: `bin/skills-manager` and `bin/skills-manager-ts` both route to
+> the TypeScript runtime. The old Python implementation has been removed.
+
+Run the bare command for the keyboard-only Ink React TUI:
 
 ```bash
 skills-manager
@@ -22,10 +26,19 @@ skills-manager doctor
 skills-manager materialize --client all --dry-run
 ```
 
+For local checkout development:
+
+```bash
+pnpm run build
+bin/skills-manager --help
+bin/skills-manager
+bin/skills-manager-ts --help
+```
+
 Current feature map:
 
-- bare command opens the keyboard-only TUI; an empty store starts in first-run
-  wizard mode
+- bare command opens the keyboard-only TUI; an empty store shows the guided
+  scan → backup → import/migrate → enable/preset → materialize → doctor path
 - global/project/session desired-state manifests, with disable masks winning
   in their scope
 - reusable presets stored as flat JSON templates
@@ -37,6 +50,8 @@ Current feature map:
   and rendered-output metadata
 - `doctor` checks filesystem safety, desired-vs-actual state, and preset
   validity
+- TUI result panes start with a readable summary and keep the full JSON below
+  it for scrolling/copying/debugging
 
 ## Mental model
 
@@ -63,54 +78,57 @@ materialize          = render desired visibility into Claude/Codex
 Importing a skill does **not** enable it. That is intentional.
 Applying a preset also does **not** materialize it. That is intentional too.
 
-## Install state on this machine
+## Install / local alpha setup
 
-This repo is expected at:
+This is currently a private local checkout package, not a published npm package,
+Homebrew formula, or pip package. Use Node 22+ and pnpm. The checked-in
+`.nvmrc` may point at a newer known-good Node, which is fine.
 
-```bash
-/Users/{userName}/Projects/skills-manager
-```
-
-The CLI tool **is installed** on this machine as a symlink:
+From this checkout:
 
 ```bash
-~/.local/bin/skills-manager
+cd /Users/{userName}/Projects/skills-manager
+nvm install
+nvm use
+pnpm install
+pnpm run build
+pnpm test
 ```
 
-Current install:
-
-```text
-~/.local/bin/skills-manager -> /Users/{userName}/Projects/skills-manager/bin/skills-manager
-```
-
-That means it runs directly from this repo checkout. There is no pip package,
-Homebrew formula, npm package, or generated shim involved. It is just:
+Link the command globally with pnpm:
 
 ```bash
-ln -s /Users/{userName}/Projects/skills-manager/bin/skills-manager ~/.local/bin/skills-manager
+pnpm link --global
 ```
 
-The wrapper skill is linked into:
-
-```bash
-~/.claude/skills/skills-manager
-~/.codex/skills/skills-manager
-```
-
-Check it:
+Then verify:
 
 ```bash
 which skills-manager
 skills-manager --help
+skills-manager
 ```
 
-Expected:
+If `pnpm link --global` says the global bin directory is missing, run:
 
-```text
-/Users/{userName}/.local/bin/skills-manager
+```bash
+pnpm setup
 ```
 
-If the command is missing, repair the install:
+Restart the shell, then rerun:
+
+```bash
+cd /Users/{userName}/Projects/skills-manager
+pnpm link --global
+```
+
+No-global-link fallback:
+
+```bash
+/Users/{userName}/Projects/skills-manager/bin/skills-manager
+```
+
+Or install a direct symlink yourself:
 
 ```bash
 mkdir -p ~/.local/bin
@@ -130,17 +148,48 @@ trash-put ~/.local/bin/skills-manager
 ln -s /Users/{userName}/Projects/skills-manager/bin/skills-manager ~/.local/bin/skills-manager
 ```
 
+Development shortcut without linking:
+
+```bash
+pnpm run build
+bin/skills-manager --help
+bin/skills-manager
+```
+
+`bin/skills-manager` delegates to `bin/skills-manager-ts`. If `dist/cli.js` is
+missing, the wrapper builds it with pnpm before running Node.
+
+## Owner prefix configuration
+
+Managed skill IDs are generated from `OWNER_PREFIX`:
+
+```text
+OWNER_PREFIX=skill.<your-name>
+```
+
+Copy `.env.example` to `.env`, then set `OWNER_PREFIX` before importing,
+adopting, or migrating skills:
+
+```bash
+cp .env.example .env
+```
+
+The runtime loads `.env` with `dotenv`. Existing shell environment variables
+win over `.env` values. The prefix only affects newly generated managed skill
+IDs; changing it later does not rename skills already stored under
+`~/.agents/skills-store/skills`.
+
 ## First-time use: migrate existing Claude/Codex skills
 
 Use this when you already have skills in `~/.claude/skills` and/or
 `~/.codex/skills` and want `skills-manager` to adopt them into the managed
 store.
 
-If you run the bare command against an empty managed store, the TUI starts in
-first-run wizard mode and walks the same decisions: scan, consider backup,
-preview import/migrate, select initial skills or a preset, preview
-materialization, and run doctor. The CLI flow below is the explicit version for
-people who want to see every lever.
+If you run the bare command against an empty managed store, use the TUI actions
+in this order: scan, backup preview/export if needed, import or migrate preview,
+apply the chosen intake action with typed confirmation, enable initial skills
+or apply a preset, materialize preview/apply, then doctor. The CLI flow below
+is the explicit version for people who want to see every lever.
 
 ### 1. Preview the migration
 
@@ -280,48 +329,43 @@ The source directory is copied into the store. It is not moved.
 skills-manager
 ```
 
-The TUI is a stdlib curses control panel over the same core commands. It is not
-a second state system. It gives you keyboard navigation, slash filtering,
-client modes (`all`, `claude`, `codex`), status/help text, menu-driven actions,
-preview/apply confirmations, and equivalent CLI command hints for scriptable
-follow-up.
+The TUI is an Ink React app over the same TypeScript core commands. It is not a
+second state system and it does not shell out to another CLI.
+Keyboard controls are intentionally plain:
 
-Open a section and press the numbered/lettered action key shown under
-`Actions:`. The TUI prompts for required values, previews mutating work first,
-and applies through the same core modules as the CLI after confirmation. Normal
-mutations use `y`; high-risk operations such as migration, restore, rollback,
-preset delete, and replace-style preset apply require typed confirmation.
-Long output is scrollable with `j`/`k`, arrow keys, PageUp/PageDown, Home, and
-End; previews and command results keep the full output instead of truncating it.
-Press `:` for an escape-hatch command palette if you already know a CLI
-subcommand, but the primary path is the action menu.
+- arrow keys or `j`/`k` move through menus, select prompts, and output panes
+- enter chooses the highlighted action or submits the current prompt
+- `y`/`n` answer simple confirmations
+- high-impact apply/export flows require typing the exact shown word
+- escape cancels a prompt
+- output screens scroll with arrow keys, `j`/`k`, and PageUp/PageDown
+- enter, escape, or `q` returns from output to the menu
+- `q` quits from the main menu
+
+The TUI prompts for required values, defaults dangerous operations to preview,
+and applies through the same core modules as the CLI only after confirmation.
+Long previews and command results keep the full output in state and render a
+scroll window instead of truncating the data. Result panes begin with a compact
+human summary and then show the full deterministic JSON payload below it.
 
 Current TUI-backed workflows cover:
 
-- first-run detection for empty stores, with wizard state for scan summaries,
-  migration/import candidates, backup recommendation, initial skill or preset
-  selection, materialize preview, doctor, and handoff to the normal dashboard
-- global/project desired-state views that separate direct entries from
-  inherited effective state, hide incompatible skills by default, and mark
-  edits as needing materialization, with actions for state inspection,
-  enable/disable, and removing overrides
-- preset list/detail/create/capture/add/remove/rename/delete/apply previews,
-  including alias/ref errors and before/after manifest views
-- render reconciliation through diff/materialize previews, conflict refusal,
-  post-materialize doctor checks, Codex restart notes, and rollback previews
-  over transaction journals
-- intake flows for scan, inbox import, explicit adopt validation, migrate
-  preview/apply, and backup prompts before high-impact mutations
+- scan/import/adopt/migrate actions for first setup and ongoing intake
+- state inspection plus enable/disable desired-state edits
+- preset list/show/create/capture/add/remove/rename/delete/apply actions
+- render reconciliation through diff/materialize and rollback actions
+- doctor audits for scan conflicts, desired/rendered issues, and preset issues
 - backup/restore previews and applies, with rendered outputs treated as
-  metadata only and post-restore materialize/doctor guidance
-- action-log viewing and a coverage-backed TUI action catalog for every CLI
-  capability: scan, import, adopt, migrate, state, enable, disable,
-  materialize, diff, doctor, rollback, backup, restore, and all preset
-  subcommands
+  metadata only
+- readable summaries plus full scrollable JSON for large scan, migrate, diff,
+  materialize, doctor, backup, restore, and preset results
+- a coverage-backed TUI action catalog for every CLI capability: scan, import,
+  adopt, migrate, state, enable, disable, materialize, diff, doctor, rollback,
+  backup, restore, and all preset subcommands
 
-The implementation deliberately keeps these workflows as testable pure helpers
-plus a thin curses shell. The boring design is the point; the filesystem is
-already chaotic enough without a secret UI state goblin.
+The implementation deliberately keeps filesystem behavior in core modules and
+uses Ink only for interaction/rendering. The boring boundary is the point; the
+filesystem is already chaotic enough without a secret UI state goblin.
 
 ### See what exists
 

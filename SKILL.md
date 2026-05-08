@@ -10,6 +10,7 @@ Use this skill when the user wants to inspect, import, migrate, enable, disable,
 ## Operating contract
 
 - Delegate filesystem work to `bin/skills-manager`; do not hand-edit rendered client skill directories.
+- Use `bin/skills-manager` for the Ink React TUI and TypeScript CLI. `bin/skills-manager-ts` is an equivalent compatibility wrapper.
 - Treat `~/.agents/skills-store` as the managed source of truth.
 - Treat `~/.agents/skills-store/presets` as reusable snapshot templates, not live profiles.
 - Treat `~/.agents/skills-store/logs/actions.jsonl` as the applied-mutation action log.
