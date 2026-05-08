@@ -56,6 +56,7 @@ class TuiState:
     detail_item: str | None = None
     detail_lines: tuple[str, ...] = ()
     pending_action: dict[str, Any] | None = None
+    scroll_offset: int = 0
 
     def filtered_items(self) -> list[str]:
         if not self.filter_text:
@@ -78,17 +79,17 @@ def _clamp(index: int, count: int) -> int:
 
 def move_selection(state: TuiState, delta: int) -> TuiState:
     count = len(state.filtered_items())
-    return replace(state, selected_index=_clamp(state.selected_index + delta, count))
+    return replace(state, selected_index=_clamp(state.selected_index + delta, count), scroll_offset=0)
 
 
 def apply_filter(state: TuiState, text: str) -> TuiState:
-    next_state = replace(state, filter_text=text, selected_index=0)
+    next_state = replace(state, filter_text=text, selected_index=0, scroll_offset=0)
     return replace(next_state, selected_index=_clamp(next_state.selected_index, len(next_state.filtered_items())))
 
 
 def cycle_client_mode(state: TuiState) -> TuiState:
     index = CLIENT_MODES.index(state.client_mode)
-    return replace(state, client_mode=CLIENT_MODES[(index + 1) % len(CLIENT_MODES)])
+    return replace(state, client_mode=CLIENT_MODES[(index + 1) % len(CLIENT_MODES)], scroll_offset=0)
 
 
 def command_hint(item: str | None) -> str:
@@ -137,9 +138,10 @@ def detail_lines_for_item(item: str | None, client: str = "all") -> list[str]:
 
 
 def _limit_lines(lines: list[str], limit: int = 40) -> list[str]:
-    if len(lines) <= limit:
-        return lines
-    return [*lines[: limit - 1], f"... {len(lines) - limit + 1} more lines"]
+    # Keep the full content in state. The curses renderer is responsible for
+    # viewport scrolling; truncating here makes long previews impossible to
+    # inspect.
+    return lines
 
 
 ACTION_KEYS = "123456789abcdefghijklmnopqrstuvwxyz"
@@ -318,10 +320,10 @@ def cli_result_lines(command: str, result: dict[str, Any]) -> list[str]:
     ]
     if result.get("stdout"):
         lines.append("stdout:")
-        lines.extend(f"  {line}" for line in result["stdout"].rstrip().splitlines()[:30])
+        lines.extend(f"  {line}" for line in result["stdout"].rstrip().splitlines())
     if result.get("stderr"):
         lines.append("stderr:")
-        lines.extend(f"  {line}" for line in result["stderr"].rstrip().splitlines()[:20])
+        lines.extend(f"  {line}" for line in result["stderr"].rstrip().splitlines())
     if not result.get("stdout") and not result.get("stderr"):
         lines.append("(no output)")
     lines.extend(["", ": run another command · b/backspace: back · q: quit"])
@@ -567,7 +569,7 @@ def begin_first_run_action(state: TuiState, action: str) -> TuiState:
     else:
         return replace(state, status=f"Unknown first-run action: {action}")
     lines.extend(["", "Equivalent CLI:", f"  {pending['preview']['cli_command']}" if pending else "  skills-manager doctor"])
-    return replace(state, detail_lines=tuple(_limit_lines(lines)), pending_action=pending, status=status)
+    return replace(state, detail_lines=tuple(_limit_lines(lines)), pending_action=pending, scroll_offset=0, status=status)
 
 
 def confirm_pending_action(state: TuiState, typed_confirmation: str | None = None) -> TuiState:
@@ -593,6 +595,7 @@ def confirm_pending_action(state: TuiState, typed_confirmation: str | None = Non
             state,
             detail_lines=tuple(tui_action_apply_lines(action_id, result)),
             pending_action=None,
+            scroll_offset=0,
             status=f"{preview['label']} applied · b/backspace returns · q quits",
         )
     if pending.get("confirmation") == "typed" and typed_confirmation != "MIGRATE":
@@ -610,7 +613,7 @@ def confirm_pending_action(state: TuiState, typed_confirmation: str | None = Non
         lines = _summarize_apply_result("Materialize applied", result)
     else:
         lines = [f"Unknown pending action: {kind}"]
-    return replace(state, detail_lines=tuple(_limit_lines(lines)), pending_action=None, status=f"{kind} applied · enter refreshes · b/backspace returns")
+    return replace(state, detail_lines=tuple(_limit_lines(lines)), pending_action=None, scroll_offset=0, status=f"{kind} applied · enter refreshes · b/backspace returns")
 
 
 def is_enter_key(key: int) -> bool:
@@ -630,6 +633,7 @@ def open_selected_item(state: TuiState) -> TuiState:
         mode="detail",
         detail_item=item,
         detail_lines=tuple(section_lines_for_item(item, state.client_mode)),
+        scroll_offset=0,
         status=f"{item} · enter refreshes · b/backspace returns · q quits",
     )
 
@@ -640,6 +644,7 @@ def refresh_detail(state: TuiState) -> TuiState:
     return replace(
         state,
         detail_lines=tuple(section_lines_for_item(state.detail_item, state.client_mode)),
+        scroll_offset=0,
         status=f"{state.detail_item} · refreshed · enter refreshes · b/backspace returns · q quits",
     )
 
@@ -652,6 +657,7 @@ def close_detail(state: TuiState) -> TuiState:
         detail_item=None,
         detail_lines=(),
         pending_action=None,
+        scroll_offset=0,
         status="q quits · enter opens · : runs CLI command · b/backspace returns · / filters · tab changes client",
     )
 
@@ -663,6 +669,7 @@ def show_cli_result(state: TuiState, command: str, result: dict[str, Any]) -> Tu
         detail_item="Command",
         detail_lines=tuple(cli_result_lines(command, result)),
         pending_action=None,
+        scroll_offset=0,
         status=f"Command exited {result['exit_code']} · : runs another · b/backspace returns · q quits",
     )
 
@@ -1496,10 +1503,7 @@ def tui_capability_coverage() -> dict[str, Any]:
 
 def _value_lines(value: Any, limit: int = 36) -> list[str]:
     text = json.dumps(value, indent=2, sort_keys=True, default=str)
-    lines = text.splitlines()
-    if len(lines) > limit:
-        return [*lines[: limit - 1], f"... {len(lines) - limit + 1} more lines"]
-    return lines
+    return text.splitlines()
 
 
 def tui_action_preview_lines(preview: dict[str, Any]) -> list[str]:
@@ -1548,6 +1552,7 @@ def begin_tui_action(state: TuiState, action_id: str, values: dict[str, Any] | N
             detail_item="Action error",
             detail_lines=tuple(_value_lines(preview)),
             pending_action=None,
+            scroll_offset=0,
             status="Action error · b/backspace returns · q quits",
         )
     payload_result = preview["preview"].get("result")
@@ -1558,6 +1563,7 @@ def begin_tui_action(state: TuiState, action_id: str, values: dict[str, Any] | N
             detail_item=f"{preview['label']} error",
             detail_lines=tuple(tui_action_preview_lines(preview)),
             pending_action=None,
+            scroll_offset=0,
             status=f"{preview['label']} failed validation · b/backspace returns · q quits",
         )
     confirmation = preview["preview"].get("confirmation", "none")
@@ -1569,6 +1575,7 @@ def begin_tui_action(state: TuiState, action_id: str, values: dict[str, Any] | N
             detail_item=preview["label"],
             detail_lines=tuple(tui_action_apply_lines(action_id, result)),
             pending_action=None,
+            scroll_offset=0,
             status=f"{preview['label']} · read-only result · b/backspace returns · q quits",
         )
     return replace(
@@ -1577,6 +1584,7 @@ def begin_tui_action(state: TuiState, action_id: str, values: dict[str, Any] | N
         detail_item=preview["label"],
         detail_lines=tuple(tui_action_preview_lines(preview)),
         pending_action={"kind": "tui_action", "confirmation": confirmation, "preview": preview},
+        scroll_offset=0,
         status=f"{preview['label']} preview · press y to apply · b/backspace cancels",
     )
 
@@ -1641,7 +1649,7 @@ def render_lines(state: TuiState) -> list[str]:
     if state.mode == "detail":
         lines.append(f"> {state.detail_item or 'Detail'}")
         lines.extend(state.detail_lines)
-        lines.extend(["", "b/backspace: back · q: quit"])
+        lines.extend(["", "scroll: ↑/↓ j/k pgup/pgdn home/end · b/backspace: back · q: quit"])
         return lines
     items = state.filtered_items()
     if not items:
@@ -1651,6 +1659,45 @@ def render_lines(state: TuiState) -> list[str]:
         lines.append(f"{marker} {item}")
     lines.extend(["", f"CLI: {command_hint(state.selected_item())}"])
     return lines
+
+
+def _fixed_header_count(lines: list[str]) -> int:
+    return min(4, len(lines))
+
+
+def max_scroll_offset(state: TuiState, height: int) -> int:
+    lines = render_lines(state)
+    fixed = _fixed_header_count(lines)
+    viewport = max(0, height - fixed)
+    return max(0, len(lines) - fixed - viewport)
+
+
+def scroll_view(state: TuiState, delta: int, height: int | None = None) -> TuiState:
+    next_offset = max(0, state.scroll_offset + delta)
+    if height is not None:
+        next_offset = min(next_offset, max_scroll_offset(state, height))
+    return replace(state, scroll_offset=next_offset)
+
+
+def scroll_to_top(state: TuiState) -> TuiState:
+    return replace(state, scroll_offset=0)
+
+
+def scroll_to_bottom(state: TuiState, height: int) -> TuiState:
+    return replace(state, scroll_offset=max_scroll_offset(state, height))
+
+
+def visible_lines(state: TuiState, height: int) -> list[str]:
+    lines = render_lines(state)
+    if height <= 0:
+        return []
+    fixed = _fixed_header_count(lines)
+    if height <= fixed:
+        return lines[:height]
+    viewport = height - fixed
+    max_offset = max(0, len(lines) - fixed - viewport)
+    offset = min(state.scroll_offset, max_offset)
+    return [*lines[:fixed], *lines[fixed + offset : fixed + offset + viewport]]
 
 
 def _safe_curses_call(func, *args) -> None:
@@ -1728,7 +1775,7 @@ def _draw(stdscr, state: TuiState) -> None:
     height, width = stdscr.getmaxyx()
     if width <= 1:
         return
-    for row, line in enumerate(render_lines(state)[:height]):
+    for row, line in enumerate(visible_lines(state, height)):
         attr = _line_attr(line, row)
         stdscr.addnstr(row, 0, line, width - 1, attr)
     stdscr.refresh()
@@ -1762,6 +1809,11 @@ def _run_command_prompt(stdscr, state: TuiState) -> TuiState:
     command = _read_prompt(stdscr, "skills-manager ")
     result = execute_cli_command(command)
     return show_cli_result(state, command, result)
+
+
+def _page_size(stdscr) -> int:
+    height, _width = stdscr.getmaxyx()
+    return max(1, height - 5)
 
 
 def _collect_action_values(stdscr, action_id: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -1807,6 +1859,23 @@ def _main(stdscr) -> int:
         if state.mode == "detail":
             if is_back_key(key):
                 state = close_detail(state)
+            elif key in (curses.KEY_DOWN, ord("j")):
+                height, _width = stdscr.getmaxyx()
+                state = scroll_view(state, 1, height)
+            elif key in (curses.KEY_UP, ord("k")):
+                height, _width = stdscr.getmaxyx()
+                state = scroll_view(state, -1, height)
+            elif key == curses.KEY_NPAGE:
+                height, _width = stdscr.getmaxyx()
+                state = scroll_view(state, _page_size(stdscr), height)
+            elif key == curses.KEY_PPAGE:
+                height, _width = stdscr.getmaxyx()
+                state = scroll_view(state, -_page_size(stdscr), height)
+            elif key == curses.KEY_HOME:
+                state = scroll_to_top(state)
+            elif key == curses.KEY_END:
+                height, _width = stdscr.getmaxyx()
+                state = scroll_to_bottom(state, height)
             elif state.pending_action and state.pending_action.get("confirmation") == "single_key" and key == ord("y"):
                 state = confirm_pending_action(state)
             elif state.pending_action and state.pending_action.get("confirmation") == "typed" and key == ord("y"):
@@ -1842,6 +1911,17 @@ def _main(stdscr) -> int:
             state = move_selection(state, 1)
         elif key in (curses.KEY_UP, ord("k")):
             state = move_selection(state, -1)
+        elif key == curses.KEY_NPAGE:
+            height, _width = stdscr.getmaxyx()
+            state = scroll_view(state, _page_size(stdscr), height)
+        elif key == curses.KEY_PPAGE:
+            height, _width = stdscr.getmaxyx()
+            state = scroll_view(state, -_page_size(stdscr), height)
+        elif key == curses.KEY_HOME:
+            state = scroll_to_top(state)
+        elif key == curses.KEY_END:
+            height, _width = stdscr.getmaxyx()
+            state = scroll_to_bottom(state, height)
         elif key in (ord("\t"),):
             state = cycle_client_mode(state)
         elif is_enter_key(key):

@@ -802,6 +802,28 @@ class TempHomeTest(unittest.TestCase):
         self.assertEqual(closed.mode, "dashboard")
         self.assertIsNone(closed.detail_item)
 
+    def test_tui_scroll_helpers_preserve_full_long_output(self) -> None:
+        from skills_manager import tui
+
+        state = tui.TuiState(
+            items=tui.DEFAULT_ITEMS,
+            mode="detail",
+            detail_item="Long output",
+            detail_lines=tuple(f"line {index}" for index in range(100)),
+        )
+
+        self.assertIn("line 99", tui.render_lines(state))
+        self.assertNotIn("line 99", tui.visible_lines(state, 10))
+
+        scrolled = tui.scroll_view(state, 50, height=10)
+        visible = "\n".join(tui.visible_lines(scrolled, 10))
+
+        self.assertEqual(scrolled.scroll_offset, 50)
+        self.assertIn("line 49", visible)
+
+        bottom = tui.scroll_to_bottom(state, 10)
+        self.assertIn("line 99", "\n".join(tui.visible_lines(bottom, 10)))
+
     def test_tui_section_views_show_real_core_state(self) -> None:
         from skills_manager import tui
 

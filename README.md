@@ -291,6 +291,8 @@ Open a section and press the numbered/lettered action key shown under
 and applies through the same core modules as the CLI after confirmation. Normal
 mutations use `y`; high-risk operations such as migration, restore, rollback,
 preset delete, and replace-style preset apply require typed confirmation.
+Long output is scrollable with `j`/`k`, arrow keys, PageUp/PageDown, Home, and
+End; previews and command results keep the full output instead of truncating it.
 Press `:` for an escape-hatch command palette if you already know a CLI
 subcommand, but the primary path is the action menu.
 
