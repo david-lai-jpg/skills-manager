@@ -793,11 +793,135 @@ class TempHomeTest(unittest.TestCase):
         opened = tui.open_selected_item(state)
         self.assertEqual(opened.mode, "detail")
         self.assertEqual(opened.detail_item, "Presets")
-        self.assertIn("Equivalent CLI:", "\n".join(tui.render_lines(opened)))
+        self.assertIn("Presets", "\n".join(tui.render_lines(opened)))
+
+        refreshed = tui.refresh_detail(opened)
+        self.assertIn("refreshed", refreshed.status)
 
         closed = tui.close_detail(opened)
         self.assertEqual(closed.mode, "dashboard")
         self.assertIsNone(closed.detail_item)
+
+    def test_tui_section_views_show_real_core_state(self) -> None:
+        from skills_manager import tui
+
+        planner.adopt_skill(make_skill(self.home / "src" / "eli5"))
+        resolver.set_skill("global", "skill.davidl.eli5", True)
+        presets.create_preset("starter")
+
+        managed = "\n".join(tui.section_lines_for_item("Managed skills", "claude"))
+        preset_lines = "\n".join(tui.section_lines_for_item("Presets", "all"))
+        diff = "\n".join(tui.section_lines_for_item("Diff", "claude"))
+
+        self.assertIn("skill.davidl.eli5", managed)
+        self.assertIn("starter", preset_lines)
+        self.assertIn("Creates:", diff)
+
+    def test_tui_command_palette_executes_cli_subcommands_in_process(self) -> None:
+        from skills_manager import tui
+
+        result = tui.execute_cli_command("scan --json")
+
+        self.assertTrue(result["ok"], result["stderr"])
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn('"locations"', result["stdout"])
+
+    def test_tui_command_palette_blocks_mutating_commands(self) -> None:
+        from skills_manager import tui
+
+        make_skill(store.inbox_dir() / "eli5")
+
+        result = tui.execute_cli_command("import")
+        export_result = tui.execute_cli_command(f"backup --export={self.home / 'exports'}")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("preview/confirmation", result["stderr"])
+        self.assertFalse(export_result["ok"])
+        self.assertIn("preview/confirmation", export_result["stderr"])
+        self.assertFalse(store.skills_root().exists())
+        self.assertFalse((self.home / "exports").exists())
+
+    def test_tui_first_run_actions_preview_and_apply_core_mutations(self) -> None:
+        from skills_manager import tui
+
+        make_skill(store.inbox_dir() / "eli5")
+        state = tui.TuiState(items=["First-run wizard"], mode="detail", detail_item="First-run wizard")
+
+        preview = tui.begin_first_run_action(state, "import")
+        self.assertEqual(preview.pending_action["kind"], "import")
+
+        applied = tui.confirm_pending_action(preview)
+        self.assertIsNone(applied.pending_action)
+        self.assertTrue((store.skills_root() / "skill.davidl.eli5").exists())
+
+    def test_tui_action_catalog_covers_all_cli_capabilities_and_sections(self) -> None:
+        from skills_manager import tui
+
+        coverage = tui.tui_capability_coverage()
+
+        self.assertTrue(coverage["ok"], coverage["missing"])
+        for section in ["First-run wizard", *tui.DEFAULT_ITEMS]:
+            self.assertTrue(tui.actions_for_section(section), section)
+            menu = "\n".join(tui.section_action_menu_lines(section))
+            self.assertIn("Actions:", menu)
+        self.assertEqual(tui.action_id_for_key("Presets", ord("1")), "preset_list")
+
+    def test_tui_action_dispatch_previews_and_applies_core_mutations(self) -> None:
+        from skills_manager import tui
+
+        planner.adopt_skill(make_skill(self.home / "src" / "eli5"))
+
+        enable_preview = tui.begin_tui_action(
+            tui.TuiState(items=tui.DEFAULT_ITEMS),
+            "global_enable",
+            {"skill": "eli5", "client": "all"},
+        )
+        self.assertEqual(enable_preview.pending_action["kind"], "tui_action")
+        enabled = tui.confirm_pending_action(enable_preview)
+        self.assertIsNone(enabled.pending_action)
+        self.assertIn("skill.davidl.eli5", resolver.resolve("claude")["desired"])
+
+        materialize_preview = tui.preview_tui_action("materialize", {"client": "claude"})
+        materialized = tui.apply_tui_action(materialize_preview)
+        self.assertTrue(materialized["ok"])
+        self.assertTrue((self.home / ".claude" / "skills" / "eli5").exists())
+
+    def test_tui_action_dispatch_handles_preset_crud_and_apply(self) -> None:
+        from skills_manager import tui
+
+        planner.adopt_skill(make_skill(self.home / "src" / "eli5"))
+        create = tui.apply_tui_action(tui.preview_tui_action("preset_create", {"name": "starter"}))
+        add = tui.apply_tui_action(tui.preview_tui_action("preset_add", {"name": "starter", "skills": "eli5", "mode": "enable"}))
+        apply = tui.apply_tui_action(tui.preview_tui_action("preset_apply", {"name": "starter", "scope": "global", "client": "all"}))
+
+        self.assertTrue(create["ok"])
+        self.assertTrue(add["ok"])
+        self.assertTrue(apply["ok"])
+        self.assertIn("skill.davidl.eli5", resolver.resolve("codex")["desired"])
+
+    def test_tui_invalid_action_input_shows_error_without_apply_path(self) -> None:
+        from skills_manager import tui
+
+        state = tui.begin_tui_action(
+            tui.TuiState(items=tui.DEFAULT_ITEMS),
+            "preset_add",
+            {"name": "missing", "skills": "eli5", "mode": "enable"},
+        )
+
+        self.assertIsNone(state.pending_action)
+        self.assertIn("failed validation", state.status)
+
+    def test_tui_invalid_rollback_id_shows_error_without_apply_path(self) -> None:
+        from skills_manager import tui
+
+        state = tui.begin_tui_action(
+            tui.TuiState(items=tui.DEFAULT_ITEMS),
+            "rollback",
+            {"transaction_id": "does-not-exist"},
+        )
+
+        self.assertIsNone(state.pending_action)
+        self.assertIn("failed validation", state.status)
 
     def test_bare_main_dispatches_to_tui(self) -> None:
         with mock.patch("skills_manager.tui.run", return_value=0) as run:

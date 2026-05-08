@@ -282,8 +282,17 @@ skills-manager
 
 The TUI is a stdlib curses control panel over the same core commands. It is not
 a second state system. It gives you keyboard navigation, slash filtering,
-client modes (`all`, `claude`, `codex`), status/help text, and equivalent CLI
-command hints for scriptable follow-up.
+client modes (`all`, `claude`, `codex`), status/help text, menu-driven actions,
+preview/apply confirmations, and equivalent CLI command hints for scriptable
+follow-up.
+
+Open a section and press the numbered/lettered action key shown under
+`Actions:`. The TUI prompts for required values, previews mutating work first,
+and applies through the same core modules as the CLI after confirmation. Normal
+mutations use `y`; high-risk operations such as migration, restore, rollback,
+preset delete, and replace-style preset apply require typed confirmation.
+Press `:` for an escape-hatch command palette if you already know a CLI
+subcommand, but the primary path is the action menu.
 
 Current TUI-backed workflows cover:
 
@@ -292,7 +301,8 @@ Current TUI-backed workflows cover:
   selection, materialize preview, doctor, and handoff to the normal dashboard
 - global/project desired-state views that separate direct entries from
   inherited effective state, hide incompatible skills by default, and mark
-  edits as needing materialization
+  edits as needing materialization, with actions for state inspection,
+  enable/disable, and removing overrides
 - preset list/detail/create/capture/add/remove/rename/delete/apply previews,
   including alias/ref errors and before/after manifest views
 - render reconciliation through diff/materialize previews, conflict refusal,
@@ -302,6 +312,10 @@ Current TUI-backed workflows cover:
   preview/apply, and backup prompts before high-impact mutations
 - backup/restore previews and applies, with rendered outputs treated as
   metadata only and post-restore materialize/doctor guidance
+- action-log viewing and a coverage-backed TUI action catalog for every CLI
+  capability: scan, import, adopt, migrate, state, enable, disable,
+  materialize, diff, doctor, rollback, backup, restore, and all preset
+  subcommands
 
 The implementation deliberately keeps these workflows as testable pure helpers
 plus a thin curses shell. The boring design is the point; the filesystem is
