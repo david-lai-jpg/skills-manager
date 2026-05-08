@@ -10,6 +10,11 @@ export function backupRoot(exportPath: string, env: Env = process.env): string {
   return basename(path) === "agent-skills-backup" ? path : join(path, "agent-skills-backup");
 }
 
+export function preMigrationBackupRoot(exportPath: string, env: Env = process.env): string {
+  const path = resolve(expandUser(exportPath, env));
+  return basename(path) === "agent-skills-pre-migration-backup" ? path : join(path, "agent-skills-pre-migration-backup");
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -26,11 +31,39 @@ async function renderedList(client: "claude" | "codex", env: Env = process.env):
 export async function dryRunExport(exportPath = "./agent-skills-backup", env: Env = process.env): Promise<Record<string, unknown>> {
   return {
     target: backupRoot(exportPath, env),
+    kind: "agent-skills-backup",
+    note: "Managed-state backup: rendered Claude/Codex skill directories are metadata-only, not raw-copied.",
     include: [skillsRoot(env), manifestsRoot(env), transactionsRoot(env), presetsRoot(env), logsRoot(env), inboxDir(env)],
     rendered_metadata_only: {
       claude: await renderedList("claude", env),
       codex: await renderedList("codex", env)
     }
+  };
+}
+
+type RawCopy = {
+  name: "claude" | "codex" | "agents";
+  from: string;
+  to: string;
+  exists: boolean;
+};
+
+async function rawPreMigrationCopies(root: string, env: Env = process.env): Promise<RawCopy[]> {
+  const copies = [
+    { name: "claude" as const, from: adapter("claude", env).globalDir(), to: join(root, "raw", "claude-skills") },
+    { name: "codex" as const, from: adapter("codex", env).globalDir(), to: join(root, "raw", "codex-skills") },
+    { name: "agents" as const, from: inboxDir(env), to: join(root, "raw", "agents-skills") }
+  ];
+  return Promise.all(copies.map(async (copy) => ({ ...copy, exists: await exists(copy.from) })));
+}
+
+export async function dryRunPreMigrationBackup(exportPath = "./agent-skills-pre-migration-backup", env: Env = process.env): Promise<Record<string, unknown>> {
+  const target = preMigrationBackupRoot(exportPath, env);
+  return {
+    target,
+    kind: "agent-skills-pre-migration-backup",
+    note: "Raw pre-migration backup: full copies of rendered Claude/Codex skill dirs and the ~/.agents/skills inbox. This is intentionally separate from managed-state backup/restore.",
+    raw_copies: await rawPreMigrationCopies(target, env)
   };
 }
 
@@ -56,6 +89,29 @@ export async function exportBackup(exportPath: string, env: Env = process.env): 
   const manifest = { version: VERSION, created_at: Date.now() / 1000, kind: "agent-skills-backup" };
   await writeJson(join(root, "manifest.json"), manifest);
   return { ok: true, backup: root, manifest };
+}
+
+export async function exportPreMigrationBackup(exportPath: string, env: Env = process.env): Promise<Record<string, unknown>> {
+  const root = preMigrationBackupRoot(exportPath, env);
+  await mkdir(root, { recursive: true });
+  const rawCopies = await rawPreMigrationCopies(root, env);
+  const copied: RawCopy[] = [];
+  for (const copy of rawCopies) {
+    if (!copy.exists) {
+      continue;
+    }
+    await copyIfExists(copy.from, copy.to);
+    copied.push(copy);
+  }
+  const manifest = {
+    version: VERSION,
+    created_at: Date.now() / 1000,
+    kind: "agent-skills-pre-migration-backup",
+    note: "Full raw copies for safety before migration. Not used by skills-manager restore.",
+    raw_copies: rawCopies
+  };
+  await writeJson(join(root, "manifest.json"), manifest);
+  return { ok: true, backup: root, manifest, copied };
 }
 
 export async function normalizeBackup(path: string, env: Env = process.env): Promise<string> {

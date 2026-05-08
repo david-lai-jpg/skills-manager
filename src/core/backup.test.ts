@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backupRoot, dryRunExport, exportBackup, normalizeBackup, restoreBackup } from "./backup.js";
+import { backupRoot, dryRunExport, dryRunPreMigrationBackup, exportBackup, exportPreMigrationBackup, normalizeBackup, preMigrationBackupRoot, restoreBackup } from "./backup.js";
 import { createPreset } from "./presets.js";
 import { stableId, writeSkillMeta } from "./store.js";
 import { makeFixtureSkill } from "./test-helpers.js";
@@ -39,7 +39,20 @@ test("backup paths expand tilde with the provided temp HOME", async () => {
   const env = { HOME: home, SKILLS_MANAGER_HOME: home };
 
   assert.equal(backupRoot("~/exports", env), join(home, "exports", "agent-skills-backup"));
+  assert.equal(preMigrationBackupRoot("~/exports", env), join(home, "exports", "agent-skills-pre-migration-backup"));
   assert.equal(await normalizeBackup("~/missing", env), join(home, "missing"));
+});
+
+test("pre-migration backup dry-run reports raw rendered and inbox copies", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sm-premigration-preview-"));
+  const env = { SKILLS_MANAGER_HOME: home };
+
+  const preview = await dryRunPreMigrationBackup(undefined, env);
+  assert.match(String(preview.target), /agent-skills-pre-migration-backup$/);
+  assert.equal(preview.kind, "agent-skills-pre-migration-backup");
+  const copies = preview.raw_copies as Array<{ name: string; from: string; to: string; exists: boolean }>;
+  assert.deepEqual(copies.map((copy) => copy.name), ["claude", "codex", "agents"]);
+  assert.equal(copies.some((copy) => copy.to.endsWith("raw/claude-skills")), true);
 });
 
 test("backup export and restore preserve managed store and presets but not rendered dirs", async () => {
@@ -60,4 +73,22 @@ test("backup export and restore preserve managed store and presets but not rende
   assert.equal(JSON.parse(await readFile(join(restoreHome, ".agents", "skills-store", "skills", skillId, "skill.json"), "utf8")).id, skillId);
   assert.equal(JSON.parse(await readFile(join(restoreHome, ".agents", "skills-store", "presets", "starter.json"), "utf8")).name, "starter");
   await assert.rejects(readFile(join(restoreHome, ".claude", "skills", "rendered-only", "SKILL.md"), "utf8"));
+});
+
+test("pre-migration backup copies full raw Claude, Codex, and agents skill dirs", async () => {
+  const sourceHome = await mkdtemp(join(tmpdir(), "sm-premigration-source-"));
+  const sourceEnv = { SKILLS_MANAGER_HOME: sourceHome, OWNER_PREFIX: "skill.test-owner" };
+  await makeFixtureSkill(join(sourceHome, ".claude", "skills", "claude-only"));
+  await makeFixtureSkill(join(sourceHome, ".codex", "skills", "codex-only"));
+  await makeFixtureSkill(join(sourceHome, ".agents", "skills", "inbox-only"));
+
+  const exported = await exportPreMigrationBackup(join(sourceHome, "exports"), sourceEnv);
+  assert.equal(exported.ok, true);
+  const backupRoot = exported.backup as string;
+  const manifest = JSON.parse(await readFile(join(backupRoot, "manifest.json"), "utf8"));
+  assert.equal(manifest.kind, "agent-skills-pre-migration-backup");
+  assert.equal((exported.copied as unknown[]).length, 3);
+  assert.equal(await readFile(join(backupRoot, "raw", "claude-skills", "claude-only", "SKILL.md"), "utf8"), "# Skill\n");
+  assert.equal(await readFile(join(backupRoot, "raw", "codex-skills", "codex-only", "SKILL.md"), "utf8"), "# Skill\n");
+  assert.equal(await readFile(join(backupRoot, "raw", "agents-skills", "inbox-only", "SKILL.md"), "utf8"), "# Skill\n");
 });

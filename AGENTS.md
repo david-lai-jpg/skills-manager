@@ -45,7 +45,7 @@ Do not treat rendered client skill directories as source. The source of truth is
 - `src/core/materializer.ts` compares desired state with rendered output and creates/removes only manager-owned rendered entries.
 - `src/core/transactions.ts` writes materialization journals and rolls back manager-created render changes.
 - `src/core/action-log.ts` appends JSONL records for applied CLI/core mutations. Dry-runs and previews do not log.
-- `src/core/backup.ts` exports/restores the managed store, manifests, transactions, presets, logs, and inbox; rendered client directories are metadata-only in backups.
+- `src/core/backup.ts` exports/restores the managed store, manifests, transactions, presets, logs, and inbox; rendered client directories are metadata-only in regular backups. `pre-migration-backup` is the separate raw-copy escape hatch for `~/.claude/skills`, `$CODEX_HOME/skills`/`~/.codex/skills`, and `~/.agents/skills`.
 - `src/tui.tsx` owns the Ink React TUI. It exposes every CLI capability through direct core-module calls, typed confirmations for high-impact actions, scrollable output panes, and human-readable result summaries above full JSON. Keep business rules in core modules where practical; keep Ink rendering thin and test action/prompt/execution helpers directly.
 - `src/cli.ts` is the Commander boundary. Bare invocation launches the TUI; subcommands expose automation. Keep business rules in modules, not buried in CLI handlers.
 
@@ -62,7 +62,7 @@ Use these terms consistently:
 - `~/.agents/skills` — inbox for external installers such as `npx skills add`.
 - `~/.claude/skills` — Claude rendered output.
 - `$CODEX_HOME/skills` or `~/.codex/skills` — Codex rendered output.
-- `skills-manager` — opens the Ink TUI; an empty managed store shows the scan → backup → import/migrate → enable/preset → materialize → doctor path.
+- `skills-manager` — opens the Ink TUI; an empty managed store shows the scan → pre-migration-backup if needed → import/migrate → enable/preset → materialize → doctor path.
 - `import`, `adopt`, `migrate` — copy skills into managed state.
 - `enable`, `disable` — change desired visibility in manifests.
 - `preset` — reusable snapshot/template; applying a preset mutates manifests but does not materialize and does not store live provenance.
@@ -90,6 +90,7 @@ rtk pnpm run build
 rtk pnpm test
 rtk bin/skills-manager --help
 rtk bin/skills-manager preset --help
+rtk bin/skills-manager pre-migration-backup --dry-run
 rtk bin/skills-manager backup --dry-run
 rtk bin/skills-manager doctor
 ```
@@ -109,6 +110,7 @@ Prefer `mkdtemp`/temporary homes in tests and set `SKILLS_MANAGER_HOME` inside t
 - Transaction journals must be written before materialization mutates rendered directories.
 - Rollback must remove only manager-created rendered entries and must not delete original source skills.
 - Backup/restore must treat rendered Claude/Codex outputs as metadata, not canonical state.
+- Pre-migration backup must be visibly distinct from regular backup and raw-copy rendered Claude/Codex skill dirs plus the agents inbox.
 - Backup/restore must include presets and action logs with the managed store.
 - `copySkillTree` and `contentHash` must ignore local junk such as `.git`, `__pycache__`, `.pytest_cache`, and `.DS_Store`.
 - Manifest writes should remain atomic via `writeJson` and stable via sorted JSON keys.

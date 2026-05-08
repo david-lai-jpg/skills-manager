@@ -46,6 +46,8 @@ skills-manager materialize --client all --dry-run
 skills-manager materialize --client all
 skills-manager diff --client all
 skills-manager doctor
+skills-manager pre-migration-backup --dry-run
+skills-manager pre-migration-backup --export <path>
 skills-manager backup --dry-run
 skills-manager backup --export <path>
 skills-manager restore --from <path> --dry-run

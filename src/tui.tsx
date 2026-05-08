@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { Box, Text, render, useApp, useInput } from "ink";
 import { expandClients } from "./core/adapters.js";
-import { dryRunExport, exportBackup, restoreBackup } from "./core/backup.js";
+import { dryRunExport, dryRunPreMigrationBackup, exportBackup, exportPreMigrationBackup, restoreBackup } from "./core/backup.js";
 import { diff as materializerDiff, materialize } from "./core/materializer.js";
 import { adoptSkill, importInbox, migrateApply, migratePlan } from "./core/planner.js";
 import {
@@ -35,6 +35,7 @@ export type TuiAction =
   | "doctor"
   | "rollback"
   | "backup"
+  | "pre-migration-backup"
   | "restore"
   | "preset-list"
   | "preset-show"
@@ -60,6 +61,7 @@ export const TUI_ACTIONS: Array<{ value: TuiAction; name: string; description: s
   { value: "doctor", name: "Doctor", description: "Audit broken links, conflicts, missing SKILL.md, and preset validity." },
   { value: "rollback", name: "Rollback transaction", description: "Undo manager-created render effects from a journal." },
   { value: "backup", name: "Backup", description: "Preview/export managed store, inbox, logs, presets, and rendered metadata." },
+  { value: "pre-migration-backup", name: "Pre-migration raw backup", description: "Preview/export full raw copies of Claude, Codex, and agents skill dirs before migration." },
   { value: "restore", name: "Restore backup", description: "Preview/apply copying backup store/inbox data; rendered dirs stay metadata-only." },
   { value: "preset-list", name: "Preset: list", description: "List reusable preset templates." },
   { value: "preset-show", name: "Preset: show", description: "Inspect a preset and stale alias/unknown ID issues." },
@@ -174,6 +176,12 @@ export function promptsForAction(action: TuiAction): Prompt[] {
         { name: "exportPath", message: "Export path", type: "input", default: "./agent-skills-backup" },
         { name: "mode", message: "Mode", type: "select", choices: ["preview", "export"], default: "preview" },
         { name: "confirmBackup", message: "Type BACKUP to write the export directory", type: "typed-confirm", phrase: "BACKUP", when: isApplyMode }
+      ];
+    case "pre-migration-backup":
+      return [
+        { name: "exportPath", message: "Export path", type: "input", default: "./agent-skills-pre-migration-backup" },
+        { name: "mode", message: "Mode", type: "select", choices: ["preview", "export"], default: "preview" },
+        { name: "confirmPreMigrationBackup", message: "Type PREMIGRATION to raw-copy rendered skill dirs and inbox", type: "typed-confirm", phrase: "PREMIGRATION", when: isApplyMode }
       ];
     case "restore":
       return [
@@ -296,6 +304,10 @@ export async function executeTuiAction(action: TuiAction, answers: Answers = {})
   if (action === "backup") {
     const exportPath = String(answers.exportPath || "./agent-skills-backup");
     return confirmed(answers, "confirmBackup") ? exportBackup(exportPath) : dryRunExport(exportPath);
+  }
+  if (action === "pre-migration-backup") {
+    const exportPath = String(answers.exportPath || "./agent-skills-pre-migration-backup");
+    return confirmed(answers, "confirmPreMigrationBackup") ? exportPreMigrationBackup(exportPath) : dryRunPreMigrationBackup(exportPath);
   }
   if (action === "restore") {
     return restoreBackup(String(answers.from ?? ""), { dryRun: !confirmed(answers, "confirmRestore") });
@@ -519,6 +531,8 @@ export function summarizeTuiResult(action: TuiAction, result: unknown): string[]
       return [data.ok === true ? "Rollback completed." : "Rollback did not complete."];
     case "backup":
       return [`Backup ${data.exported ? "exported" : "preview"}: ${String(data.target ?? data.path ?? "target unavailable")}.`];
+    case "pre-migration-backup":
+      return [`Pre-migration raw backup ${data.ok === true ? "exported" : "preview"}: ${String(data.target ?? data.backup ?? "target unavailable")}.`];
     case "restore":
       return [`Restore ${data.restored ? "applied" : "preview"}: rendered client directories remain metadata-only.`];
     case "preset-list":
@@ -575,7 +589,7 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     let cancelled = false;
     void allSkills().then((skills) => {
       if (!cancelled && Object.keys(skills).length === 0) {
-        setFirstRunHint("Empty managed store detected. Suggested path: scan → backup → import/migrate → enable or preset → materialize → doctor.");
+        setFirstRunHint("Empty managed store detected. Suggested path: scan → pre-migration backup if needed → import/migrate → enable or preset → materialize → doctor.");
       }
     }).catch(() => {
       if (!cancelled) {

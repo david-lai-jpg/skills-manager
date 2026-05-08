@@ -25,6 +25,7 @@ const requiredCommands = [
   "doctor",
   "rollback",
   "backup",
+  "pre-migration-backup",
   "restore",
   "preset list",
   "preset show",

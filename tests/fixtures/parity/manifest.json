@@ -14,6 +14,7 @@
     "doctor",
     "rollback",
     "backup",
+    "pre-migration-backup",
     "restore",
     "preset list",
     "preset show",
@@ -78,8 +79,8 @@
     },
     {
       "id": "backup-restore-rendered-metadata",
-      "description": "Backup includes canonical managed state and rendered-output metadata only; restore does not materialize.",
-      "covers": ["backup", "restore", "doctor"]
+      "description": "Backup includes canonical managed state and rendered-output metadata only; pre-migration backup raw-copies rendered dirs and inbox; restore does not materialize.",
+      "covers": ["backup", "pre-migration-backup", "restore", "doctor"]
     },
     {
       "id": "preset-crud-apply",

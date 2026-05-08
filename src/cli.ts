@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { expandClients } from "./core/adapters.js";
-import { dryRunExport, exportBackup, restoreBackup } from "./core/backup.js";
+import { dryRunExport, dryRunPreMigrationBackup, exportBackup, exportPreMigrationBackup, restoreBackup } from "./core/backup.js";
 import { inboxDir, storeRoot } from "./core/paths.js";
 import { diff as materializerDiff, materialize } from "./core/materializer.js";
 import { adoptSkill, importInbox, migrateApply, migratePlan } from "./core/planner.js";
@@ -220,6 +220,7 @@ export function buildProgram(): Command {
 
   program
     .command("backup")
+    .description("Export managed store state; rendered Claude/Codex dirs are metadata-only")
     .option("--dry-run")
     .option("--export <path>")
     .action(async (options: { dryRun?: boolean; export?: string }) => {
@@ -228,6 +229,19 @@ export function buildProgram(): Command {
         return;
       }
       emitResult(await exportBackup(options.export));
+    });
+
+  program
+    .command("pre-migration-backup")
+    .description("Export full raw copies of rendered Claude/Codex skill dirs and the agents inbox")
+    .option("--dry-run")
+    .option("--export <path>")
+    .action(async (options: { dryRun?: boolean; export?: string }) => {
+      if (options.dryRun || !options.export) {
+        process.stdout.write(stableJson(await dryRunPreMigrationBackup(options.export)));
+        return;
+      }
+      emitResult(await exportPreMigrationBackup(options.export));
     });
 
   program

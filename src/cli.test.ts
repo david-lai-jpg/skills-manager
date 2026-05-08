@@ -41,6 +41,20 @@ test("skills-manager backup dry-run is implemented and parseable", () => {
   assert.match(JSON.parse(result.stdout).target, /agent-skills-backup$/);
 });
 
+test("skills-manager pre-migration-backup dry-run is implemented and parseable", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sm-cli-premigration-"));
+  const result = spawnSync("node", ["dist/cli.js", "pre-migration-backup", "--dry-run"], {
+    cwd: process.cwd(),
+    env: { ...process.env, SKILLS_MANAGER_HOME: home, OWNER_PREFIX: "skill.test-owner" },
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.match(parsed.target, /agent-skills-pre-migration-backup$/);
+  assert.deepEqual(parsed.raw_copies.map((copy: { name: string }) => copy.name), ["claude", "codex", "agents"]);
+});
+
 test("checked-in skills-manager-ts wrapper runs the built CLI", () => {
   const result = spawnSync("bin/skills-manager-ts", ["--help"], {
     cwd: process.cwd(),

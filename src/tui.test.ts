@@ -34,6 +34,7 @@ test("Ink TUI action catalog covers every CLI capability with executable actions
     "import",
     "materialize",
     "migrate",
+    "pre-migration-backup",
     "preset-add",
     "preset-apply",
     "preset-capture",
@@ -62,7 +63,7 @@ test("Ink TUI gives empty-store users a first-run path", async () => {
   process.env.SKILLS_MANAGER_HOME = await mkdtemp(join(tmpdir(), "sm-ink-first-run-"));
   const instance = render(createElement(SkillsManagerApp));
   try {
-    assert.match(await waitForFrame(instance, /Empty managed store detected/), /scan → backup → import\/migrate/);
+    assert.match(await waitForFrame(instance, /Empty managed store detected/), /scan → pre-migration backup if needed →\s+import\/migrate/);
   } finally {
     instance.cleanup();
     if (oldHome === undefined) {
@@ -75,6 +76,7 @@ test("Ink TUI gives empty-store users a first-run path", async () => {
 
 test("TUI action prompts expose mutating confirmation and scrolling-friendly output flows", () => {
   assert.deepEqual(promptsForAction("materialize").map((prompt) => prompt.name), ["client", "project", "mode", "confirmMaterialize"]);
+  assert.deepEqual(promptsForAction("pre-migration-backup").map((prompt) => prompt.name), ["exportPath", "mode", "confirmPreMigrationBackup"]);
   assert.deepEqual(promptsForAction("preset-delete").map((prompt) => prompt.name), ["name", "mode", "confirmDelete"]);
   assert.deepEqual(promptsForAction("restore").map((prompt) => prompt.name), ["from", "mode", "confirmRestore"]);
   assert.equal(promptsForAction("rollback").find((prompt) => prompt.name === "confirmRollback")?.type, "typed-confirm");

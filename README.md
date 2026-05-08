@@ -38,7 +38,8 @@ bin/skills-manager-ts --help
 Current feature map:
 
 - bare command opens the keyboard-only TUI; an empty store shows the guided
-  scan → backup → import/migrate → enable/preset → materialize → doctor path
+  scan → pre-migration-backup if needed → import/migrate → enable/preset →
+  materialize → doctor path
 - global/project/session desired-state manifests, with disable masks winning
   in their scope
 - reusable presets stored as flat JSON templates
@@ -48,6 +49,8 @@ Current feature map:
   manager-created rendered entries
 - backups that include skills, manifests, transactions, presets, logs, inbox,
   and rendered-output metadata
+- a separate `pre-migration-backup` command for full raw copies of
+  Claude/Codex rendered skill dirs plus the agents inbox
 - `doctor` checks filesystem safety, desired-vs-actual state, and preset
   validity
 - TUI result panes start with a readable summary and keep the full JSON below
@@ -186,10 +189,34 @@ Use this when you already have skills in `~/.claude/skills` and/or
 store.
 
 If you run the bare command against an empty managed store, use the TUI actions
-in this order: scan, backup preview/export if needed, import or migrate preview,
-apply the chosen intake action with typed confirmation, enable initial skills
-or apply a preset, materialize preview/apply, then doctor. The CLI flow below
-is the explicit version for people who want to see every lever.
+in this order: scan, pre-migration raw backup preview/export if needed, import
+or migrate preview, apply the chosen intake action with typed confirmation,
+enable initial skills or apply a preset, materialize preview/apply, then doctor.
+The CLI flow below is the explicit version for people who want to see every
+lever.
+
+### 0. Optional raw safety copy before migration
+
+This is different from the regular managed-state backup. It raw-copies the full
+current skill directories before `skills-manager` starts managing anything:
+
+```bash
+skills-manager pre-migration-backup --dry-run
+skills-manager pre-migration-backup --export ~/Downloads
+```
+
+That creates:
+
+```text
+~/Downloads/agent-skills-pre-migration-backup/
+  raw/claude-skills/
+  raw/codex-skills/
+  raw/agents-skills/
+  manifest.json
+```
+
+Use this before first migration if you want a dumb, faithful copy of the old
+world.
 
 ### 1. Preview the migration
 
@@ -356,12 +383,12 @@ Current TUI-backed workflows cover:
 - render reconciliation through diff/materialize and rollback actions
 - doctor audits for scan conflicts, desired/rendered issues, and preset issues
 - backup/restore previews and applies, with rendered outputs treated as
-  metadata only
+  metadata only, plus raw pre-migration backup export
 - readable summaries plus full scrollable JSON for large scan, migrate, diff,
-  materialize, doctor, backup, restore, and preset results
+  materialize, doctor, backup, pre-migration-backup, restore, and preset results
 - a coverage-backed TUI action catalog for every CLI capability: scan, import,
   adopt, migrate, state, enable, disable, materialize, diff, doctor, rollback,
-  backup, restore, and all preset subcommands
+  backup, pre-migration-backup, restore, and all preset subcommands
 
 The implementation deliberately keeps filesystem behavior in core modules and
 uses Ink only for interaction/rendering. The boring boundary is the point; the
@@ -520,6 +547,13 @@ scope/client/manifest targets when applicable, preset names for preset actions,
 and materialization transaction IDs for render changes.
 
 ## Backup and restore
+
+There are two backup commands:
+
+- `pre-migration-backup` is a raw safety copy of existing rendered/inbox skill
+  directories before a first migration.
+- `backup` is the normal managed-state export. It backs up the canonical store
+  and writes Claude/Codex rendered outputs as metadata only.
 
 Create a portable backup preview:
 
@@ -1009,6 +1043,27 @@ What it does **not** treat as canonical:
 
 Use it when moving the managed skill setup to another machine.
 
+### `pre-migration-backup`
+
+Create a raw safety copy before first migration.
+
+```bash
+skills-manager pre-migration-backup --dry-run
+skills-manager pre-migration-backup --export ~/Downloads
+```
+
+What it copies:
+
+- full `~/.claude/skills`
+- full `$CODEX_HOME/skills` or `~/.codex/skills`
+- full `~/.agents/skills` inbox
+
+This creates `agent-skills-pre-migration-backup/` with raw directory copies.
+It is intentionally not the same thing as `skills-manager backup`, and
+`skills-manager restore` does not consume it as canonical managed state.
+
+Use it before `migrate --apply` when you want a plain escape hatch.
+
 ### `restore`
 
 Restore a backup created by `skills-manager backup`.
@@ -1056,6 +1111,7 @@ Use it after transferring a backup to another machine or rebuilding local state.
 | `diff` | Show desired vs actual rendered dirs | No | `materialize` |
 | `doctor` | Find broken/conflicting skill state | No | fix conflicts |
 | `rollback` | Undo manager-created render changes | Yes | `doctor` |
+| `pre-migration-backup` | Raw-copy Claude/Codex/inbox skill dirs before migration | Yes with `--export` | `migrate --dry-run` |
 | `backup` | Export store, presets, logs, and inbox | Yes with `--export` | copy backup somewhere |
 | `restore` | Import store, presets, logs, and inbox from backup | Yes with `--apply` | `materialize`, `doctor` |
 
@@ -1086,6 +1142,8 @@ skills-manager doctor [--project PATH]
 skills-manager rollback <transaction-id>
 skills-manager backup --dry-run
 skills-manager backup --export PATH
+skills-manager pre-migration-backup --dry-run
+skills-manager pre-migration-backup --export PATH
 skills-manager restore --from PATH --dry-run
 skills-manager restore --from PATH --apply
 ```

@@ -76,6 +76,7 @@ The TUI is not a preset-only editor. It must cover the full feature surface:
 - materialize
 - doctor
 - backup
+- pre-migration-backup
 - restore
 - rollback
 
@@ -90,8 +91,8 @@ V1 TUI facts:
 - TUI calls core modules directly; it does not shell out to its own CLI.
 - Business rules live in core modules, not in TUI rendering code.
 - TUI rendering stays thin; action coverage, prompt definitions, execution helpers, output summaries, and light Ink render behavior are test-covered.
-- Every CLI capability is present in the TUI action catalog: scan, import, adopt, migrate, state, enable, disable, diff, materialize, doctor, rollback, backup, restore, and all preset subcommands.
-- Empty-store users see the guided scan → backup → import/migrate → enable/preset → materialize → doctor path directly in the menu.
+- Every CLI capability is present in the TUI action catalog: scan, import, adopt, migrate, state, enable, disable, diff, materialize, doctor, rollback, backup, pre-migration-backup, restore, and all preset subcommands.
+- Empty-store users see the guided scan → backup/pre-migration-backup → import/migrate → enable/preset → materialize → doctor path directly in the menu.
 - Output panes scroll with arrow keys, `j`/`k`, and PageUp/PageDown.
 - Result panes start with a compact human summary and keep the full deterministic JSON below it.
 
@@ -123,7 +124,7 @@ The current TUI does not yet implement a multi-screen wizard. Instead, when the
 managed store is empty, it shows the intended first-run path in-product:
 
 1. Scan existing inbox, Claude, and Codex skill locations.
-2. Preview/export a backup if needed.
+2. Preview/export a regular managed backup or raw pre-migration backup if needed.
 3. Preview import/migration actions before applying.
 4. Apply the chosen intake action with typed confirmation.
 5. Enable initial global skills or apply a preset.
@@ -147,6 +148,7 @@ High-risk apply/export actions require typing an exact action word:
 
 - import apply
 - backup export
+- pre-migration raw backup export
 - materialize apply
 - restore
 - rollback
@@ -430,6 +432,7 @@ Resolver tests cover profile-scope removal.
 Doctor tests should cover preset validation.
 
 Backup/restore tests should prove presets are exported/restored as managed state.
+Pre-migration backup tests should prove raw Claude/Codex/inbox skill dirs are copied separately from regular restoreable backups.
 
 Action-log tests should prove applied core mutations log and dry-runs do not.
 

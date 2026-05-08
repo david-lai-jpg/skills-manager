@@ -48,6 +48,7 @@ Thumbs.db
 
 # Generated backups / archives
 agent-skills-backup/
+agent-skills-pre-migration-backup/
 *.tar
 *.tar.gz
 *.zip
