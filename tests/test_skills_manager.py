@@ -787,6 +787,17 @@ class TempHomeTest(unittest.TestCase):
         self.assertEqual(state.selected_item(), "Presets")
         self.assertEqual(state.client_mode, "claude")
         self.assertIn("skills-manager preset list", tui.command_hint("Presets"))
+        self.assertTrue(tui.is_enter_key(10))
+        self.assertEqual(tui._rgb_to_curses((0x27, 0x29, 0x32)), (153, 161, 196))
+
+        opened = tui.open_selected_item(state)
+        self.assertEqual(opened.mode, "detail")
+        self.assertEqual(opened.detail_item, "Presets")
+        self.assertIn("Equivalent CLI:", "\n".join(tui.render_lines(opened)))
+
+        closed = tui.close_detail(opened)
+        self.assertEqual(closed.mode, "dashboard")
+        self.assertIsNone(closed.detail_item)
 
     def test_bare_main_dispatches_to_tui(self) -> None:
         with mock.patch("skills_manager.tui.run", return_value=0) as run:

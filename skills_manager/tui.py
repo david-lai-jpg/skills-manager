@@ -24,6 +24,23 @@ DEFAULT_ITEMS = [
     "Action log",
 ]
 
+ENTER_KEYS = (10, 13, curses.KEY_ENTER)
+BACK_KEYS = (8, 127, curses.KEY_BACKSPACE)
+
+PAIR_NORMAL = 1
+PAIR_HIGHLIGHT = 2
+PAIR_MUTED = 3
+
+CUSTOM_BG = 16
+CUSTOM_FG = 17
+CUSTOM_ACCENT = 18
+CUSTOM_MUTED = 19
+
+THEME_BG = (0x27, 0x29, 0x32)
+THEME_FG = (0x37, 0xEB, 0xF3)
+THEME_ACCENT = (0xFD, 0xF5, 0x00)
+THEME_MUTED = (0x8B, 0xE9, 0xFE)
+
 
 @dataclass(frozen=True)
 class TuiState:
@@ -31,8 +48,10 @@ class TuiState:
     selected_index: int = 0
     filter_text: str = ""
     client_mode: str = "all"
-    status: str = "q quits · / filters · tab changes client"
+    status: str = "q quits · enter opens · b/backspace returns · / filters · tab changes client"
     mode: str = "dashboard"
+    detail_item: str | None = None
+    detail_lines: tuple[str, ...] = ()
 
     def filtered_items(self) -> list[str]:
         if not self.filter_text:
@@ -70,6 +89,7 @@ def cycle_client_mode(state: TuiState) -> TuiState:
 
 def command_hint(item: str | None) -> str:
     hints = {
+        "First-run wizard": "skills-manager scan --json",
         "Managed skills": "skills-manager state --client all --json",
         "Presets": "skills-manager preset list",
         "Global configuration": "skills-manager state --client all --json",
@@ -82,6 +102,66 @@ def command_hint(item: str | None) -> str:
         "Action log": "cat ~/.agents/skills-store/logs/actions.jsonl",
     }
     return hints.get(item or "", "")
+
+
+def detail_lines_for_item(item: str | None, client: str = "all") -> list[str]:
+    descriptions = {
+        "First-run wizard": "Scan existing skill locations, preview intake/migration, choose initial skills, then materialize.",
+        "Managed skills": "Inspect canonical managed skills and effective visibility for Claude/Codex.",
+        "Presets": "List, inspect, preview, create, rename, delete, and apply reusable preset templates.",
+        "Global configuration": "Edit global desired-state manifests. Enabling here does not render until materialize.",
+        "Project configuration": "Edit project desired-state manifests. Project disables can mask global enables.",
+        "Diff": "Compare desired state with rendered client skill directories without mutating files.",
+        "Materialize": "Preview then render desired state into manager-owned Claude/Codex skill directories.",
+        "Doctor": "Audit broken links, missing SKILL.md files, conflicts, unsafe targets, and preset validity.",
+        "Backup / restore": "Preview/export managed store backups, or preview/restore from a backup directory.",
+        "Rollback / transactions": "Inspect materialization journals and roll back manager-created render changes.",
+        "Action log": "Inspect the append-only JSONL log for applied CLI/TUI mutations.",
+    }
+    if not item:
+        return ["No item selected."]
+    command = command_hint(item)
+    lines = [
+        descriptions.get(item, "Open this section."),
+        "",
+        f"Client mode: {client}",
+    ]
+    if command:
+        lines.extend(["", "Equivalent CLI:", f"  {command}"])
+    lines.extend(["", "This screen is read-only until a preview/confirmation flow is shown."])
+    return lines
+
+
+def is_enter_key(key: int) -> bool:
+    return key in ENTER_KEYS
+
+
+def is_back_key(key: int) -> bool:
+    return key in BACK_KEYS or key in (ord("b"), ord("h"), curses.KEY_LEFT)
+
+
+def open_selected_item(state: TuiState) -> TuiState:
+    item = state.selected_item()
+    if item is None:
+        return replace(state, status="No matching item to open.")
+    return replace(
+        state,
+        mode="detail",
+        detail_item=item,
+        detail_lines=tuple(detail_lines_for_item(item, state.client_mode)),
+        status=f"{item} · b/backspace returns · q quits",
+    )
+
+
+def close_detail(state: TuiState) -> TuiState:
+    next_mode = "first_run" if state.items and state.items[0] == "First-run wizard" else "dashboard"
+    return replace(
+        state,
+        mode=next_mode,
+        detail_item=None,
+        detail_lines=(),
+        status="q quits · enter opens · b/backspace returns · / filters · tab changes client",
+    )
 
 
 def is_first_run() -> bool:
@@ -579,6 +659,11 @@ def render_lines(state: TuiState) -> list[str]:
         state.status,
         "",
     ]
+    if state.mode == "detail":
+        lines.append(f"> {state.detail_item or 'Detail'}")
+        lines.extend(state.detail_lines)
+        lines.extend(["", "b/backspace: back · q: quit"])
+        return lines
     items = state.filtered_items()
     if not items:
         lines.append("No matching items.")
@@ -589,11 +674,84 @@ def render_lines(state: TuiState) -> list[str]:
     return lines
 
 
+def _safe_curses_call(func, *args) -> None:
+    try:
+        func(*args)
+    except curses.error:
+        pass
+
+
+def _rgb_to_curses(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+    return tuple(round(channel * 1000 / 255) for channel in rgb)
+
+
+def _can_use_custom_colors() -> bool:
+    return bool(
+        curses.has_colors()
+        and getattr(curses, "COLORS", 0) > CUSTOM_MUTED
+        and getattr(curses, "can_change_color", lambda: False)()
+    )
+
+
+def _init_custom_color(index: int, rgb: tuple[int, int, int]) -> None:
+    _safe_curses_call(curses.init_color, index, *_rgb_to_curses(rgb))
+
+
+def _init_colors() -> None:
+    if not curses.has_colors():
+        return
+    _safe_curses_call(curses.start_color)
+    _safe_curses_call(curses.use_default_colors)
+    # The Ghostty Cyberpunk 2077 theme maps ANSI color 0 ("black" to curses) to
+    # neon yellow. Avoid the low ANSI slots for backgrounds; use RGB colors when
+    # supported and fall back to the terminal default background otherwise.
+    if _can_use_custom_colors():
+        _init_custom_color(CUSTOM_BG, THEME_BG)
+        _init_custom_color(CUSTOM_FG, THEME_FG)
+        _init_custom_color(CUSTOM_ACCENT, THEME_ACCENT)
+        _init_custom_color(CUSTOM_MUTED, THEME_MUTED)
+        _safe_curses_call(curses.init_pair, PAIR_NORMAL, CUSTOM_FG, CUSTOM_BG)
+        _safe_curses_call(curses.init_pair, PAIR_HIGHLIGHT, CUSTOM_BG, CUSTOM_ACCENT)
+        _safe_curses_call(curses.init_pair, PAIR_MUTED, CUSTOM_MUTED, CUSTOM_BG)
+    else:
+        _safe_curses_call(curses.init_pair, PAIR_NORMAL, curses.COLOR_CYAN, -1)
+        _safe_curses_call(curses.init_pair, PAIR_HIGHLIGHT, curses.COLOR_WHITE, curses.COLOR_MAGENTA)
+        _safe_curses_call(curses.init_pair, PAIR_MUTED, curses.COLOR_BLUE, -1)
+
+
+def _color_attr(pair: int) -> int:
+    if not curses.has_colors():
+        return curses.A_NORMAL
+    try:
+        return curses.color_pair(pair)
+    except curses.error:
+        return curses.A_NORMAL
+
+
+def _line_attr(line: str, row: int) -> int:
+    if line.startswith(">"):
+        return _color_attr(PAIR_HIGHLIGHT) | curses.A_BOLD
+    if row < 3 or line.startswith("CLI:") or line.endswith(":"):
+        return _color_attr(PAIR_MUTED)
+    return _color_attr(PAIR_NORMAL)
+
+
+def _init_screen(stdscr) -> None:
+    _safe_curses_call(curses.curs_set, 0)
+    _safe_curses_call(stdscr.keypad, True)
+    _init_colors()
+    _safe_curses_call(stdscr.bkgd, " ", _color_attr(PAIR_NORMAL))
+
+
 def _draw(stdscr, state: TuiState) -> None:
+    _safe_curses_call(stdscr.bkgd, " ", _color_attr(PAIR_NORMAL))
     stdscr.erase()
     height, width = stdscr.getmaxyx()
+    if width <= 1:
+        return
     for row, line in enumerate(render_lines(state)[:height]):
-        stdscr.addnstr(row, 0, line, max(0, width - 1))
+        attr = _line_attr(line, row)
+        stdscr.addnstr(row, 0, line, width - 1, attr)
     stdscr.refresh()
 
 
@@ -610,19 +768,25 @@ def _read_filter(stdscr, state: TuiState) -> TuiState:
 
 
 def _main(stdscr) -> int:
-    curses.curs_set(0)
+    _init_screen(stdscr)
     state = initial_tui_state()
     while True:
         _draw(stdscr, state)
         key = stdscr.getch()
         if key in (ord("q"), 27):
             return 0
+        if state.mode == "detail":
+            if is_back_key(key):
+                state = close_detail(state)
+            continue
         if key in (curses.KEY_DOWN, ord("j")):
             state = move_selection(state, 1)
         elif key in (curses.KEY_UP, ord("k")):
             state = move_selection(state, -1)
         elif key in (ord("\t"),):
             state = cycle_client_mode(state)
+        elif is_enter_key(key):
+            state = open_selected_item(state)
         elif key == ord("/"):
             state = _read_filter(stdscr, state)
 
