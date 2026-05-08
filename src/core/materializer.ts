@@ -4,7 +4,7 @@ import { appendAction } from "./action-log.js";
 import { adapter, type ClientName } from "./adapters.js";
 import { resolveDesired } from "./resolver.js";
 import { skillsRoot } from "./paths.js";
-import { idToDir, markerData, pathUnder, readJson, writeJson } from "./store.js";
+import { idToDir, markerData, pathUnder, readJson, shouldSkipLocalJunkName, shouldSkipLocalJunkPath, writeJson } from "./store.js";
 import { markTransaction, newTransaction, removeManagerCreated, type TransactionAction } from "./transactions.js";
 import type { Env } from "./paths.js";
 
@@ -58,12 +58,18 @@ export async function actualRendered(renderedDir: string, env: Env = process.env
     return out;
   }
   for (const name of (await readdir(renderedDir)).sort()) {
+    if (shouldSkipLocalJunkName(name)) {
+      continue;
+    }
     const path = join(renderedDir, name);
     const info = await lstat(path);
+    if (!info.isDirectory() && !info.isSymbolicLink()) {
+      continue;
+    }
     out[name] = {
       path,
       managed_skill_id: await managedRenderedId(path, env),
-      type: info.isSymbolicLink() ? "symlink" : info.isDirectory() ? "dir" : "file"
+      type: info.isSymbolicLink() ? "symlink" : "dir"
     };
   }
   return out;
@@ -82,7 +88,17 @@ export async function diff(client: ClientName, options: { project?: string; env?
   for (const [alias, skillId] of Object.entries(desiredAliases)) {
     const current = actual[alias];
     if (!current) {
-      creates.push({ alias, skill_id: skillId });
+      const target = join(renderedDir, alias);
+      if (await existsByLstat(target)) {
+        conflicts.push({
+          alias,
+          path: target,
+          actual_managed_skill_id: null,
+          desired_skill_id: skillId
+        });
+      } else {
+        creates.push({ alias, skill_id: skillId });
+      }
     } else if (current.managed_skill_id !== skillId) {
       conflicts.push({
         alias,
@@ -141,7 +157,10 @@ export async function applyAction(action: TransactionAction, env: Env = process.
     try {
       await symlink(action.source, action.target, "dir");
     } catch {
-      await cp(action.source, action.target, { recursive: true });
+      await cp(action.source, action.target, {
+        recursive: true,
+        filter: async (source) => !shouldSkipLocalJunkPath(source, { root: action.source })
+      });
       await writeJson(join(action.target, ".skills-manager.json"), markerData(action.skill_id));
       action.op = "create_copy";
     }

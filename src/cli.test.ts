@@ -18,6 +18,7 @@ async function makeSkillWithBody(path: string, body: string): Promise<void> {
 test("skills-manager scan emits parseable JSON for a temp home", async () => {
   const home = await mkdtemp(join(tmpdir(), "sm-cli-scan-"));
   await makeSkill(join(home, ".agents", "skills", "eli5"));
+  await writeFile(join(home, ".agents", "skills", "package.json"), "{}");
 
   const result = spawnSync("node", ["dist/cli.js", "scan", "--json"], {
     cwd: process.cwd(),
@@ -29,6 +30,7 @@ test("skills-manager scan emits parseable JSON for a temp home", async () => {
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.locations.inbox.entries[0].name, "eli5");
   assert.equal(parsed.locations.inbox.entries[0].type, "skill_dir");
+  assert.equal(parsed.locations.inbox.entries.some((entry: { name: string }) => entry.name === "package.json"), false);
 });
 
 test("skills-manager backup dry-run is implemented and parseable", () => {

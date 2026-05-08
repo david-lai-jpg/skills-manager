@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, mkdir, readlink } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { diff, materialize } from "./materializer.js";
@@ -79,4 +79,21 @@ test("materialize refuses unmanaged rendered conflicts", async () => {
   const result = await materialize("claude", { env, surface: "test" });
   assert.equal(result.ok, false);
   assert.match(String(result.error), /conflicts/);
+});
+
+test("diff ignores rendered junk files but still detects blocking desired aliases", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sm-materialize-junk-"));
+  const env = { SKILLS_MANAGER_HOME: home, OWNER_PREFIX: "skill.test-owner" };
+  const skillId = await addManagedSkill(home);
+  await mkdir(join(home, ".claude", "skills"), { recursive: true });
+  await writeFile(join(home, ".claude", "skills", ".DS_Store"), "junk");
+  await writeFile(join(home, ".claude", "skills", "package.json"), "{}");
+
+  const noDesired = await diff("claude", { env });
+  assert.deepEqual(noDesired.actual, {});
+
+  await setSkill("global", skillId, true, { env, surface: "test" });
+  await writeFile(join(home, ".claude", "skills", "eli5"), "not a directory");
+  const blocked = await diff("claude", { env });
+  assert.equal((blocked.conflicts as Array<Record<string, unknown>>)[0]?.alias, "eli5");
 });

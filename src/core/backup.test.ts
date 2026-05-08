@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backupRoot, dryRunExport, dryRunPreMigrationBackup, exportBackup, exportPreMigrationBackup, normalizeBackup, preMigrationBackupRoot, restoreBackup } from "./backup.js";
+import { backupRoot, copyIfExists, dryRunExport, dryRunPreMigrationBackup, exportBackup, exportPreMigrationBackup, normalizeBackup, preMigrationBackupRoot, restoreBackup } from "./backup.js";
 import { createPreset } from "./presets.js";
 import { stableId, writeSkillMeta } from "./store.js";
 import { makeFixtureSkill } from "./test-helpers.js";
@@ -60,12 +60,17 @@ test("backup export and restore preserve managed store and presets but not rende
   const sourceEnv = { SKILLS_MANAGER_HOME: sourceHome, OWNER_PREFIX: "skill.test-owner" };
   const skillId = await addManagedSkill(sourceHome);
   await createPreset("Starter", { env: sourceEnv, surface: "test" });
+  await mkdir(join(sourceHome, ".agents", "skills", ".git"), { recursive: true });
+  await writeFile(join(sourceHome, ".agents", "skills", ".git", "HEAD"), "junk");
+  await writeFile(join(sourceHome, ".agents", "skills", ".gitignore"), "junk");
   await makeFixtureSkill(join(sourceHome, ".claude", "skills", "rendered-only"));
 
   const exported = await exportBackup(join(sourceHome, "exports"), sourceEnv);
   assert.equal(exported.ok, true);
   const backupRoot = exported.backup as string;
   assert.equal(JSON.parse(await readFile(join(backupRoot, "manifest.json"), "utf8")).kind, "agent-skills-backup");
+  await assert.rejects(readFile(join(backupRoot, "inbox", "agents-skills", ".gitignore"), "utf8"));
+  await assert.rejects(readFile(join(backupRoot, "inbox", "agents-skills", ".git", "HEAD"), "utf8"));
 
   const restoreHome = await mkdtemp(join(tmpdir(), "sm-backup-restore-"));
   const restored = await restoreBackup(backupRoot, { dryRun: false, env: { SKILLS_MANAGER_HOME: restoreHome, OWNER_PREFIX: "skill.test-owner" } });
@@ -81,6 +86,14 @@ test("pre-migration backup copies full raw Claude, Codex, and agents skill dirs"
   await makeFixtureSkill(join(sourceHome, ".claude", "skills", "claude-only"));
   await makeFixtureSkill(join(sourceHome, ".codex", "skills", "codex-only"));
   await makeFixtureSkill(join(sourceHome, ".agents", "skills", "inbox-only"));
+  await writeFile(join(sourceHome, ".claude", "skills", ".DS_Store"), "junk");
+  await mkdir(join(sourceHome, ".claude", "skills", ".husky"), { recursive: true });
+  await writeFile(join(sourceHome, ".claude", "skills", ".husky", "pre-commit"), "junk");
+  await writeFile(join(sourceHome, ".codex", "skills", ".gitignore"), "junk");
+  await mkdir(join(sourceHome, ".codex", "skills", ".system"), { recursive: true });
+  await writeFile(join(sourceHome, ".codex", "skills", ".system", "SKILL.md"), "junk");
+  await mkdir(join(sourceHome, ".agents", "skills", ".git"), { recursive: true });
+  await writeFile(join(sourceHome, ".agents", "skills", ".git", "HEAD"), "junk");
 
   const exported = await exportPreMigrationBackup(join(sourceHome, "exports"), sourceEnv);
   assert.equal(exported.ok, true);
@@ -91,4 +104,22 @@ test("pre-migration backup copies full raw Claude, Codex, and agents skill dirs"
   assert.equal(await readFile(join(backupRoot, "raw", "claude-skills", "claude-only", "SKILL.md"), "utf8"), "# Skill\n");
   assert.equal(await readFile(join(backupRoot, "raw", "codex-skills", "codex-only", "SKILL.md"), "utf8"), "# Skill\n");
   assert.equal(await readFile(join(backupRoot, "raw", "agents-skills", "inbox-only", "SKILL.md"), "utf8"), "# Skill\n");
+  await assert.rejects(readFile(join(backupRoot, "raw", "claude-skills", ".DS_Store"), "utf8"));
+  await assert.rejects(readFile(join(backupRoot, "raw", "claude-skills", ".husky", "pre-commit"), "utf8"));
+  await assert.rejects(readFile(join(backupRoot, "raw", "codex-skills", ".gitignore"), "utf8"));
+  await assert.rejects(readFile(join(backupRoot, "raw", "codex-skills", ".system", "SKILL.md"), "utf8"));
+  await assert.rejects(readFile(join(backupRoot, "raw", "agents-skills", ".git", "HEAD"), "utf8"));
+});
+
+test("backup copy allows managed dot roots but filters dot children", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sm-backup-dot-root-"));
+  await makeFixtureSkill(join(home, ".agents", "skills", "visible"));
+  await mkdir(join(home, ".agents", "skills", ".system"), { recursive: true });
+  await writeFile(join(home, ".agents", "skills", ".system", "SKILL.md"), "junk");
+
+  const target = join(home, "out", "agents-root");
+  await copyIfExists(join(home, ".agents"), target);
+
+  assert.equal(await readFile(join(target, "skills", "visible", "SKILL.md"), "utf8"), "# Skill\n");
+  await assert.rejects(readFile(join(target, "skills", ".system", "SKILL.md"), "utf8"));
 });

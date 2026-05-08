@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { adoptSkill, importInbox, migrateApply, migratePlan } from "./planner.js";
@@ -40,6 +40,9 @@ test("migratePlan merges identical aliases and forks different content", async (
   await makeFixtureSkill(join(home, ".codex", "skills", "same"), "identical\n");
   await makeFixtureSkill(join(home, ".claude", "skills", "fork-me"), "claude\n");
   await makeFixtureSkill(join(home, ".codex", "skills", "fork-me"), "codex\n");
+  await writeFile(join(home, ".claude", "skills", ".DS_Store"), "junk");
+  await writeFile(join(home, ".codex", "skills", ".gitignore"), "junk");
+  await mkdir(join(home, ".codex", "skills", ".git"), { recursive: true });
 
   const plan = await migratePlan({ env });
   const kinds = plan.actions.map((action) => action.kind);

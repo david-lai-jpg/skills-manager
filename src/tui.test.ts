@@ -2,10 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createElement, type ComponentType } from "react";
 import { render } from "ink-testing-library";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { executeTuiAction, SkillsManagerApp, TUI_ACTIONS, formatTuiOutput, promptsForAction, summarizeTuiResult, tuiActionCoverage, visibleOutput } from "./tui.js";
+import {
+  choiceWindow,
+  executeTuiAction,
+  filterChoiceOptions,
+  SkillsManagerApp,
+  TUI_ACTIONS,
+  formatTuiOutput,
+  promptsForAction,
+  summarizeTuiResult,
+  tuiActionCoverage,
+  visibleOutput
+} from "./tui.js";
 
 async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 30));
@@ -20,6 +31,35 @@ async function waitForFrame(instance: { lastFrame: () => string | undefined }, p
     await settle();
   }
   return instance.lastFrame() ?? "";
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+async function withTempHome<T>(prefix: string, run: (home: string) => Promise<T>): Promise<T> {
+  const oldHome = process.env.SKILLS_MANAGER_HOME;
+  process.env.SKILLS_MANAGER_HOME = await mkdtemp(join(tmpdir(), prefix));
+  try {
+    return await run(process.env.SKILLS_MANAGER_HOME);
+  } finally {
+    if (oldHome === undefined) {
+      delete process.env.SKILLS_MANAGER_HOME;
+    } else {
+      process.env.SKILLS_MANAGER_HOME = oldHome;
+    }
+  }
+}
+
+async function writeManagedSkill(home: string, id: string, alias: string): Promise<void> {
+  const dir = join(home, ".agents", "skills-store", "skills", id);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "skill.json"), JSON.stringify({
+    id,
+    aliases: { claude: alias, codex: alias },
+    compatibility: { claude: true, codex: true },
+    sources: []
+  }));
 }
 
 test("Ink TUI action catalog covers every CLI capability with executable actions", () => {
@@ -63,7 +103,8 @@ test("Ink TUI gives empty-store users a first-run path", async () => {
   process.env.SKILLS_MANAGER_HOME = await mkdtemp(join(tmpdir(), "sm-ink-first-run-"));
   const instance = render(createElement(SkillsManagerApp));
   try {
-    assert.match(await waitForFrame(instance, /Empty managed store detected/), /scan → pre-migration backup if needed →\s+import\/migrate/);
+    const frame = stripAnsi(await waitForFrame(instance, /Empty managed store detected/));
+    assert.match(frame, /scan → pre-migration backup if needed →\s+import\/migrate/);
   } finally {
     instance.cleanup();
     if (oldHome === undefined) {
@@ -77,10 +118,53 @@ test("Ink TUI gives empty-store users a first-run path", async () => {
 test("TUI action prompts expose mutating confirmation and scrolling-friendly output flows", () => {
   assert.deepEqual(promptsForAction("materialize").map((prompt) => prompt.name), ["client", "project", "mode", "confirmMaterialize"]);
   assert.deepEqual(promptsForAction("pre-migration-backup").map((prompt) => prompt.name), ["exportPath", "mode", "confirmPreMigrationBackup"]);
-  assert.deepEqual(promptsForAction("preset-delete").map((prompt) => prompt.name), ["name", "mode", "confirmDelete"]);
+  assert.deepEqual(promptsForAction("preset-delete").map((prompt) => prompt.name), ["names", "mode", "confirmDelete"]);
   assert.deepEqual(promptsForAction("restore").map((prompt) => prompt.name), ["from", "mode", "confirmRestore"]);
   assert.equal(promptsForAction("rollback").find((prompt) => prompt.name === "confirmRollback")?.type, "typed-confirm");
+  assert.equal(promptsForAction("enable").find((prompt) => prompt.name === "skill")?.type, "search-select");
+  assert.equal(promptsForAction("preset-add").find((prompt) => prompt.name === "skills")?.type, "multi-select");
   assert.deepEqual(visibleOutput("a\nb\nc\nd", 1, 2), ["b", "c"]);
+});
+
+test("TUI searchable choice helpers filter options and keep the active row visible", () => {
+  const choices = [
+    { value: "skill.example.alpha", label: "Alpha", description: "Claude helper" },
+    { value: "skill.example.beta", label: "Beta", description: "Codex helper" },
+    { value: "skill.example.gamma", label: "Gamma" }
+  ];
+
+  assert.deepEqual(filterChoiceOptions(choices, "codex").map((choice) => choice.value), ["skill.example.beta"]);
+  assert.deepEqual(filterChoiceOptions(choices, "gamma").map((choice) => choice.value), ["skill.example.gamma"]);
+  assert.deepEqual(choiceWindow(["a", "b", "c", "d", "e"], 3, 3), [
+    { item: "c", index: 2 },
+    { item: "d", index: 3 },
+    { item: "e", index: 4 }
+  ]);
+});
+
+test("TUI preset mutations accept multi-selected skill and preset values", async () => {
+  await withTempHome("sm-ink-multi-", async (home) => {
+    await writeManagedSkill(home, "skill.example.alpha", "alpha");
+    await writeManagedSkill(home, "skill.example.beta", "beta");
+    await executeTuiAction("preset-create", { name: "daily", dryRun: false });
+    await executeTuiAction("preset-create", { name: "cleanup", dryRun: false });
+
+    const added = await executeTuiAction("preset-add", {
+      name: "daily",
+      skills: ["skill.example.alpha", "skill.example.beta"],
+      mode: "enable",
+      dryRun: true
+    });
+    assert.equal((added as { ok?: boolean }).ok, true);
+    assert.equal(((added as { added?: unknown[] }).added ?? []).length, 2);
+
+    const deleted = await executeTuiAction("preset-delete", {
+      names: ["daily", "cleanup"],
+      mode: "preview"
+    });
+    assert.equal((deleted as { ok?: boolean }).ok, true);
+    assert.equal((deleted as { count?: number }).count, 2);
+  });
 });
 
 test("TUI result formatter shows human summary before full JSON", () => {
@@ -160,6 +244,8 @@ test("Ink TUI output panes scroll instead of truncating all content away", async
   process.env.SKILLS_MANAGER_HOME = await mkdtemp(join(tmpdir(), "sm-ink-scroll-"));
   const instance = render(createElement(SkillsManagerApp));
   try {
+    instance.stdin.write("\r");
+    await settle();
     instance.stdin.write("\r");
     await settle();
     instance.stdin.write("\r");

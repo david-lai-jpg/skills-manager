@@ -18,6 +18,7 @@ import {
   pathUnder,
   readJson,
   saveManifest,
+  shouldSkipLocalJunkName,
   stableId,
   stableJson,
   writeSkillMeta,
@@ -32,6 +33,15 @@ test("path helpers honor SKILLS_MANAGER_HOME and SKILLS_MANAGER_STORE", async ()
   assert.equal(storeRoot(env), "/tmp/custom-store");
 
   await ensureStore(env);
+});
+
+test("junk predicate skips all dot names except explicit managed roots when allowed", () => {
+  assert.equal(shouldSkipLocalJunkName(".system"), true);
+  assert.equal(shouldSkipLocalJunkName(".husky"), true);
+  assert.equal(shouldSkipLocalJunkName(".agents"), true);
+  assert.equal(shouldSkipLocalJunkName(".agents", { allowManagedDotRoot: true }), false);
+  assert.equal(shouldSkipLocalJunkName(".claude", { allowManagedDotRoot: true }), false);
+  assert.equal(shouldSkipLocalJunkName(".codex", { allowManagedDotRoot: true }), false);
 });
 
 test("stable ids and manifest templates stay stable", () => {
@@ -81,7 +91,11 @@ test("contentHash skips local junk and stays stable", async () => {
   const root = await mkdtemp(join(tmpdir(), "sm-hash-"));
   await writeFile(join(root, "SKILL.md"), "# Skill\n");
   await writeFile(join(root, ".DS_Store"), "junk");
+  await writeFile(join(root, ".gitignore"), "junk");
+  await writeFile(join(root, ".local-note"), "junk");
   await writeFile(join(root, "skill.json"), "{}");
+  await mkdir(join(root, ".husky"));
+  await writeFile(join(root, ".husky", "pre-commit"), "junk");
   await mkdir(join(root, "__pycache__"));
   await writeFile(join(root, "__pycache__", "x.pyc"), "junk");
   await symlink(join(root, "SKILL.md"), join(root, "link.md"));
@@ -95,6 +109,10 @@ test("copySkillTree preserves skill files while ignoring local junk", async () =
   const dst = await mkdtemp(join(tmpdir(), "sm-copy-dst-parent-"));
   await writeFile(join(src, "SKILL.md"), "# Skill\n");
   await writeFile(join(src, ".DS_Store"), "junk");
+  await writeFile(join(src, ".gitignore"), "junk");
+  await writeFile(join(src, ".local-note"), "junk");
+  await mkdir(join(src, ".husky"));
+  await writeFile(join(src, ".husky", "pre-commit"), "junk");
   await mkdir(join(src, ".git"));
   await writeFile(join(src, ".git", "HEAD"), "junk");
 
@@ -103,6 +121,9 @@ test("copySkillTree preserves skill files while ignoring local junk", async () =
 
   assert.equal(await readFile(join(target, "SKILL.md"), "utf8"), "# Skill\n");
   await assert.rejects(readFile(join(target, ".DS_Store"), "utf8"));
+  await assert.rejects(readFile(join(target, ".gitignore"), "utf8"));
+  await assert.rejects(readFile(join(target, ".local-note"), "utf8"));
+  await assert.rejects(readFile(join(target, ".husky", "pre-commit"), "utf8"));
   await assert.rejects(readFile(join(target, ".git", "HEAD"), "utf8"));
 });
 

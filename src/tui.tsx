@@ -18,7 +18,7 @@ import {
 } from "./core/presets.js";
 import { resolveDesired, resolveSkillRef, setSkill } from "./core/resolver.js";
 import { scan } from "./core/scanner.js";
-import { allSkills, stableJson } from "./core/store.js";
+import { allSkills, stableJson, type SkillMeta } from "./core/store.js";
 import { rollback } from "./core/transactions.js";
 import type { Client, Scope } from "./core/schemas.js";
 
@@ -79,22 +79,30 @@ type Prompt =
   | { name: string; message: string; type: "input"; default?: string; required?: boolean; when?: (answers: Answers) => boolean }
   | { name: string; message: string; type: "confirm"; default?: boolean; when?: (answers: Answers) => boolean }
   | { name: string; message: string; type: "typed-confirm"; phrase: string; when?: (answers: Answers) => boolean }
-  | { name: string; message: string; type: "select"; choices: string[]; default?: string; when?: (answers: Answers) => boolean };
+  | { name: string; message: string; type: "select"; choices: string[]; default?: string; when?: (answers: Answers) => boolean }
+  | { name: string; message: string; type: "search-select"; source: (answers: Answers) => Promise<ChoiceOption[]>; required?: boolean; when?: (answers: Answers) => boolean }
+  | { name: string; message: string; type: "multi-select"; source: (answers: Answers) => Promise<ChoiceOption[]>; required?: boolean; when?: (answers: Answers) => boolean };
 
-type Answers = Record<string, string | boolean>;
+type Answers = Record<string, string | boolean | string[]>;
 type Screen = "menu" | "prompt" | "running" | "output";
+
+export type ChoiceOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
 
 export function tuiActionCoverage(): string[] {
   return TUI_ACTIONS.map((action) => action.value).filter((value) => value !== "quit").sort();
 }
 
 function optionalProject(value: Answers): { project?: string } {
-  const project = String(value.project ?? "").trim();
+  const project = answerString(value, "project").trim();
   return project ? { project } : {};
 }
 
 function clientValue(value: Answers): Client | "all" {
-  const client = String(value.client ?? "all");
+  const client = answerString(value, "client", "all");
   if (client === "claude" || client === "codex" || client === "all") {
     return client;
   }
@@ -102,7 +110,7 @@ function clientValue(value: Answers): Client | "all" {
 }
 
 function scopeValue(value: Answers): Scope {
-  const scope = String(value.scope ?? "global");
+  const scope = answerString(value, "scope", "global");
   if (scope === "global" || scope === "project" || scope === "session") {
     return scope;
   }
@@ -110,7 +118,7 @@ function scopeValue(value: Answers): Scope {
 }
 
 function presetScopeValue(value: Answers): "global" | "project" {
-  const scope = String(value.scope ?? "global");
+  const scope = answerString(value, "scope", "global");
   if (scope === "global" || scope === "project") {
     return scope;
   }
@@ -118,15 +126,82 @@ function presetScopeValue(value: Answers): "global" | "project" {
 }
 
 function csv(value: Answers, name: string): string[] {
-  return String(value[name] ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+  return answerStrings(value, name);
+}
+
+function answerString(value: Answers, name: string, fallback = ""): string {
+  const raw = value[name];
+  if (Array.isArray(raw)) {
+    return raw[0] ?? fallback;
+  }
+  if (raw === undefined) {
+    return fallback;
+  }
+  return String(raw);
+}
+
+function answerStrings(value: Answers, name: string): string[] {
+  const raw = value[name];
+  if (Array.isArray(raw)) {
+    return raw.map(String).map((item) => item.trim()).filter(Boolean);
+  }
+  return String(raw ?? "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function isApplyMode(value: Answers): boolean {
-  return value.mode === "apply" || value.mode === "export";
+  const mode = answerString(value, "mode");
+  return mode === "apply" || mode === "export";
 }
 
 function confirmed(value: Answers, name: string): boolean {
   return value[name] === true;
+}
+
+function skillAliasLabel(meta: SkillMeta): string {
+  const aliases = Array.from(new Set(Object.values(meta.aliases ?? {}).filter(Boolean)));
+  return aliases.length > 0 ? aliases.join(" / ") : meta.id;
+}
+
+export async function managedSkillChoices(): Promise<ChoiceOption[]> {
+  const managed = await allSkills();
+  return Object.values(managed)
+    .sort((left, right) => skillAliasLabel(left).localeCompare(skillAliasLabel(right)))
+    .map((meta) => {
+      const clients = [
+        meta.compatibility?.claude ? "Claude" : "",
+        meta.compatibility?.codex ? "Codex" : ""
+      ].filter(Boolean).join("+") || "no compatible clients";
+      return {
+        value: meta.id,
+        label: skillAliasLabel(meta),
+        description: `${meta.id} · ${clients}`
+      };
+    });
+}
+
+export async function presetChoices(): Promise<ChoiceOption[]> {
+  return (await listPresets()).map((name) => ({ value: name, label: name }));
+}
+
+function isChoicePrompt(prompt: Prompt): prompt is Extract<Prompt, { type: "search-select" | "multi-select" }> {
+  return prompt.type === "search-select" || prompt.type === "multi-select";
+}
+
+export function filterChoiceOptions(choices: ChoiceOption[], query: string): ChoiceOption[] {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    return choices;
+  }
+  return choices.filter((choice) => [choice.label, choice.value, choice.description ?? ""].join(" ").toLowerCase().includes(q));
+}
+
+export function choiceWindow<T>(items: T[], selectedIndex: number, height = 12): Array<{ item: T; index: number }> {
+  if (items.length <= height) {
+    return items.map((item, index) => ({ item, index }));
+  }
+  const half = Math.floor(height / 2);
+  const start = Math.min(Math.max(0, selectedIndex - half), Math.max(0, items.length - height));
+  return items.slice(start, start + height).map((item, offset) => ({ item, index: start + offset }));
 }
 
 export function promptsForAction(action: TuiAction): Prompt[] {
@@ -137,7 +212,8 @@ export function promptsForAction(action: TuiAction): Prompt[] {
     case "doctor":
       return [
         ...(action === "state" || action === "diff" ? [{ name: "client", message: "Client", type: "select" as const, choices: ["all", "claude", "codex"], default: "all" }] : []),
-        { name: "project", message: "Project path (blank for global only)", type: "input" }
+        { name: "project", message: "Project path (blank for global only)", type: "input" },
+        ...(action === "scan" ? [{ name: "includeNonSkills", message: "Show non-skill directories missing SKILL.md?", type: "confirm" as const, default: false }] : [])
       ];
     case "import":
       return [
@@ -157,7 +233,7 @@ export function promptsForAction(action: TuiAction): Prompt[] {
         { name: "scope", message: "Scope", type: "select", choices: ["global", "project", "session"], default: "global" },
         { name: "client", message: "Client", type: "select", choices: ["all", "claude", "codex"], default: "all" },
         { name: "project", message: "Project path (only used for project scope)", type: "input" },
-        { name: "skill", message: "Skill id/alias", type: "input", required: true }
+        { name: "skill", message: "Skill", type: "search-select", source: managedSkillChoices, required: true }
       ];
     case "materialize":
       return [
@@ -190,7 +266,7 @@ export function promptsForAction(action: TuiAction): Prompt[] {
         { name: "confirmRestore", message: "Type RESTORE to copy backup state into the managed store", type: "typed-confirm", phrase: "RESTORE", when: isApplyMode }
       ];
     case "preset-show":
-      return [{ name: "name", message: "Preset name", type: "input", required: true }];
+      return [{ name: "name", message: "Preset", type: "search-select", source: presetChoices, required: true }];
     case "preset-create":
       return [
         { name: "name", message: "Preset name", type: "input", required: true },
@@ -207,27 +283,27 @@ export function promptsForAction(action: TuiAction): Prompt[] {
     case "preset-add":
     case "preset-remove":
       return [
-        { name: "name", message: "Preset name", type: "input", required: true },
-        { name: "skills", message: "Skill ids/aliases, comma separated", type: "input", required: true },
+        { name: "name", message: "Preset", type: "search-select", source: presetChoices, required: true },
+        { name: "skills", message: "Skills", type: "multi-select", source: managedSkillChoices, required: true },
         { name: "mode", message: "Mode", type: "select", choices: ["enable", "disable"], default: "enable" },
         { name: "dryRun", message: "Dry-run only?", type: "confirm", default: false }
       ];
     case "preset-rename":
       return [
-        { name: "oldName", message: "Old preset name", type: "input", required: true },
+        { name: "oldName", message: "Old preset", type: "search-select", source: presetChoices, required: true },
         { name: "newName", message: "New preset name", type: "input", required: true },
         { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmRename", message: "Type RENAME to rename the preset JSON file", type: "typed-confirm", phrase: "RENAME", when: isApplyMode }
       ];
     case "preset-delete":
       return [
-        { name: "name", message: "Preset name", type: "input", required: true },
+        { name: "names", message: "Presets", type: "multi-select", source: presetChoices, required: true },
         { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmDelete", message: "Type DELETE to delete only the preset JSON file", type: "typed-confirm", phrase: "DELETE", when: isApplyMode }
       ];
     case "preset-apply":
       return [
-        { name: "name", message: "Preset name", type: "input", required: true },
+        { name: "name", message: "Preset", type: "search-select", source: presetChoices, required: true },
         { name: "scope", message: "Scope", type: "select", choices: ["global", "project"], default: "global" },
         { name: "project", message: "Project path (only used for project scope)", type: "input" },
         { name: "client", message: "Client", type: "select", choices: ["all", "claude", "codex"], default: "all" },
@@ -242,13 +318,13 @@ export function promptsForAction(action: TuiAction): Prompt[] {
 
 export async function executeTuiAction(action: TuiAction, answers: Answers = {}): Promise<unknown> {
   if (action === "scan") {
-    return scan(optionalProject(answers));
+    return scan({ ...optionalProject(answers), includeNonSkills: Boolean(answers.includeNonSkills) });
   }
   if (action === "import") {
     return importInbox({ dryRun: !confirmed(answers, "confirmImport") });
   }
   if (action === "adopt") {
-    return adoptSkill(String(answers.path ?? ""));
+    return adoptSkill(answerString(answers, "path"));
   }
   if (action === "migrate") {
     return confirmed(answers, "confirmMigrate") ? migrateApply() : { ...(await migratePlan()), dry_run: true };
@@ -261,7 +337,7 @@ export async function executeTuiAction(action: TuiAction, answers: Answers = {})
   if (action === "enable" || action === "disable") {
     const scope = scopeValue(answers);
     const project = scope === "project" ? optionalProject(answers) : {};
-    const skillId = await resolveSkillRef(String(answers.skill ?? ""));
+    const skillId = await resolveSkillRef(answerString(answers, "skill"));
     const manifest = await setSkill(scope, skillId, action === "enable", { client: clientValue(answers), ...project, surface: "tui" });
     return { ok: true, enabled: action === "enable", scope, client: clientValue(answers), skill_id: skillId, manifest };
   }
@@ -277,7 +353,7 @@ export async function executeTuiAction(action: TuiAction, answers: Answers = {})
     );
   }
   if (action === "doctor") {
-    const scanned = await scan(optionalProject(answers));
+    const scanned = await scan({ ...optionalProject(answers), includeNonSkills: true });
     const issues: Array<Record<string, unknown>> = [];
     for (const [location, value] of Object.entries(scanned.locations)) {
       for (const entry of value.entries) {
@@ -299,47 +375,55 @@ export async function executeTuiAction(action: TuiAction, answers: Answers = {})
     if (!confirmed(answers, "confirmRollback")) {
       return { ok: false, cancelled: true, message: "rollback requires typed confirmation" };
     }
-    return rollback(String(answers.transaction ?? ""));
+    return rollback(answerString(answers, "transaction"));
   }
   if (action === "backup") {
-    const exportPath = String(answers.exportPath || "./agent-skills-backup");
+    const exportPath = answerString(answers, "exportPath", "./agent-skills-backup") || "./agent-skills-backup";
     return confirmed(answers, "confirmBackup") ? exportBackup(exportPath) : dryRunExport(exportPath);
   }
   if (action === "pre-migration-backup") {
-    const exportPath = String(answers.exportPath || "./agent-skills-pre-migration-backup");
+    const exportPath = answerString(answers, "exportPath", "./agent-skills-pre-migration-backup") || "./agent-skills-pre-migration-backup";
     return confirmed(answers, "confirmPreMigrationBackup") ? exportPreMigrationBackup(exportPath) : dryRunPreMigrationBackup(exportPath);
   }
   if (action === "restore") {
-    return restoreBackup(String(answers.from ?? ""), { dryRun: !confirmed(answers, "confirmRestore") });
+    return restoreBackup(answerString(answers, "from"), { dryRun: !confirmed(answers, "confirmRestore") });
   }
   if (action === "preset-list") {
     return listPresets();
   }
   if (action === "preset-show") {
-    return showPreset(String(answers.name ?? ""));
+    return showPreset(answerString(answers, "name"));
   }
   if (action === "preset-create") {
-    return createPreset(String(answers.name ?? ""), { description: String(answers.description ?? ""), dryRun: Boolean(answers.dryRun), surface: "tui" });
+    return createPreset(answerString(answers, "name"), { description: answerString(answers, "description"), dryRun: Boolean(answers.dryRun), surface: "tui" });
   }
   if (action === "preset-capture") {
     const scope = presetScopeValue(answers);
-    return capturePreset(String(answers.name ?? ""), scope, { ...(scope === "project" ? optionalProject(answers) : {}), dryRun: Boolean(answers.dryRun), surface: "tui" });
+    return capturePreset(answerString(answers, "name"), scope, { ...(scope === "project" ? optionalProject(answers) : {}), dryRun: Boolean(answers.dryRun), surface: "tui" });
   }
   if (action === "preset-add" || action === "preset-remove") {
-    const mode = String(answers.mode ?? "enable") === "disable" ? "disable" : "enable";
+    const mode = answerString(answers, "mode", "enable") === "disable" ? "disable" : "enable";
     return action === "preset-add"
-      ? addEntries(String(answers.name ?? ""), csv(answers, "skills"), { mode, dryRun: Boolean(answers.dryRun), surface: "tui" })
-      : removeEntries(String(answers.name ?? ""), csv(answers, "skills"), { mode, dryRun: Boolean(answers.dryRun), surface: "tui" });
+      ? addEntries(answerString(answers, "name"), csv(answers, "skills"), { mode, dryRun: Boolean(answers.dryRun), surface: "tui" })
+      : removeEntries(answerString(answers, "name"), csv(answers, "skills"), { mode, dryRun: Boolean(answers.dryRun), surface: "tui" });
   }
   if (action === "preset-rename") {
-    return renamePreset(String(answers.oldName ?? ""), String(answers.newName ?? ""), { apply: confirmed(answers, "confirmRename"), surface: "tui" });
+    return renamePreset(answerString(answers, "oldName"), answerString(answers, "newName"), { apply: confirmed(answers, "confirmRename"), surface: "tui" });
   }
   if (action === "preset-delete") {
-    return deletePreset(String(answers.name ?? ""), { apply: confirmed(answers, "confirmDelete"), surface: "tui" });
+    const names = answerStrings(answers, "names").length > 0 ? answerStrings(answers, "names") : answerStrings(answers, "name");
+    if (names.length <= 1) {
+      return deletePreset(names[0] ?? "", { apply: confirmed(answers, "confirmDelete"), surface: "tui" });
+    }
+    const results = [];
+    for (const name of names) {
+      results.push(await deletePreset(name, { apply: confirmed(answers, "confirmDelete"), surface: "tui" }));
+    }
+    return { ok: results.every((result) => asRecord(result).ok !== false), count: results.length, results };
   }
   if (action === "preset-apply") {
     const scope = presetScopeValue(answers);
-    return applyPreset(String(answers.name ?? ""), scope, {
+    return applyPreset(answerString(answers, "name"), scope, {
       ...(scope === "project" ? optionalProject(answers) : {}),
       client: clientValue(answers),
       replace: Boolean(answers.replace),
@@ -350,11 +434,17 @@ export async function executeTuiAction(action: TuiAction, answers: Answers = {})
   return { ok: true };
 }
 
-function promptDefault(prompt: Prompt): string | boolean {
+function promptDefault(prompt: Prompt): string | boolean | string[] {
   if (prompt.type === "confirm") {
     return prompt.default ?? false;
   }
   if (prompt.type === "typed-confirm") {
+    return "";
+  }
+  if (prompt.type === "multi-select") {
+    return [];
+  }
+  if (prompt.type === "search-select") {
     return "";
   }
   return prompt.default ?? "";
@@ -581,9 +671,18 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
   const [scroll, setScroll] = useState(0);
   const [hint, setHint] = useState("");
   const [firstRunHint, setFirstRunHint] = useState("");
+  const [choiceOptions, setChoiceOptions] = useState<ChoiceOption[]>([]);
+  const [choiceQuery, setChoiceQuery] = useState("");
+  const [choiceSelected, setChoiceSelected] = useState<string[]>([]);
+  const [choiceLoading, setChoiceLoading] = useState(false);
 
   const prompts = useMemo(() => promptsForAction(activeAction), [activeAction]);
   const currentPrompt = prompts[promptIndex];
+  const filteredChoices = useMemo(
+    () => (currentPrompt && isChoicePrompt(currentPrompt) ? filterChoiceOptions(choiceOptions, choiceQuery) : []),
+    [choiceOptions, choiceQuery, currentPrompt]
+  );
+  const visibleChoices = useMemo(() => choiceWindow(filteredChoices, selectIndex), [filteredChoices, selectIndex]);
 
   useEffect(() => {
     let cancelled = false;
@@ -601,12 +700,55 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (screen !== "prompt" || !currentPrompt || !isChoicePrompt(currentPrompt)) {
+      setChoiceOptions([]);
+      setChoiceQuery("");
+      setChoiceSelected([]);
+      setChoiceLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setChoiceOptions([]);
+    setChoiceQuery("");
+    setChoiceSelected([]);
+    setSelectIndex(0);
+    setChoiceLoading(true);
+    void currentPrompt.source(answers).then((choices) => {
+      if (!cancelled) {
+        setChoiceOptions(choices);
+        setChoiceLoading(false);
+      }
+    }).catch((error) => {
+      if (!cancelled) {
+        setChoiceOptions([]);
+        setChoiceLoading(false);
+        setHint(error instanceof Error ? error.message : String(error));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAction, promptIndex, screen]);
+
+  useEffect(() => {
+    if (filteredChoices.length === 0) {
+      setSelectIndex(0);
+      return;
+    }
+    setSelectIndex((value) => Math.min(value, filteredChoices.length - 1));
+  }, [filteredChoices.length]);
+
   function resetMenu(): void {
     setScreen("menu");
     setPromptIndex(0);
     setAnswers({});
     setInputValue("");
     setSelectIndex(0);
+    setChoiceQuery("");
+    setChoiceSelected([]);
     setHint("");
   }
 
@@ -634,6 +776,9 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     setAnswers({});
     setPromptIndex(0);
     setHint("");
+    setChoiceQuery("");
+    setChoiceSelected([]);
+    setChoiceOptions([]);
     if (nextPrompts.length === 0) {
       void runSelected(action, {});
       return;
@@ -650,12 +795,20 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     setScreen("prompt");
   }
 
-  function advancePrompt(value: string | boolean): void {
+  function advancePrompt(value: string | boolean | string[]): void {
     if (!currentPrompt) {
       return;
     }
     if (currentPrompt.type === "input" && currentPrompt.required && !String(value).trim()) {
       setHint("Required.");
+      return;
+    }
+    if (currentPrompt.type === "search-select" && currentPrompt.required && !String(value).trim()) {
+      setHint("Choose an item.");
+      return;
+    }
+    if (currentPrompt.type === "multi-select" && currentPrompt.required && Array.isArray(value) && value.length === 0) {
+      setHint("Choose at least one item.");
       return;
     }
     const nextAnswers = { ...answers, [currentPrompt.name]: value };
@@ -669,6 +822,9 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     setAnswers(nextAnswers);
     setPromptIndex(nextIndex);
     setHint("");
+    setChoiceQuery("");
+    setChoiceSelected([]);
+    setChoiceOptions([]);
     setInputValue(String(promptDefault(nextPrompt)));
     setSelectIndex(Math.max(0, nextPrompt.type === "select" ? nextPrompt.choices.indexOf(String(nextPrompt.default ?? nextPrompt.choices[0])) : 0));
   }
@@ -693,6 +849,35 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     if (screen === "prompt" && currentPrompt) {
       if (key.escape) {
         resetMenu();
+      } else if (isChoicePrompt(currentPrompt)) {
+        if (choiceLoading) {
+          return;
+        }
+        if (key.upArrow || input === "k") {
+          setSelectIndex((value) => Math.max(0, value - 1));
+        } else if (key.downArrow || input === "j") {
+          setSelectIndex((value) => Math.min(Math.max(0, filteredChoices.length - 1), value + 1));
+        } else if (currentPrompt.type === "multi-select" && input === " ") {
+          const selectedChoice = filteredChoices[selectIndex];
+          if (selectedChoice) {
+            setChoiceSelected((values) => values.includes(selectedChoice.value)
+              ? values.filter((item) => item !== selectedChoice.value)
+              : [...values, selectedChoice.value]);
+          }
+        } else if (key.return) {
+          if (currentPrompt.type === "search-select") {
+            const selectedChoice = filteredChoices[selectIndex];
+            advancePrompt(selectedChoice?.value ?? "");
+          } else {
+            advancePrompt(choiceSelected);
+          }
+        } else if (key.backspace || key.delete) {
+          setChoiceQuery((value) => value.slice(0, -1));
+          setSelectIndex(0);
+        } else if (input && input !== " " && !key.ctrl && !key.meta) {
+          setChoiceQuery((value) => value + input);
+          setSelectIndex(0);
+        }
       } else if (currentPrompt.type === "select") {
         if (key.upArrow || input === "k") {
           setSelectIndex((value) => Math.max(0, value - 1));
@@ -784,6 +969,26 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
             {currentPrompt.type === "select" && currentPrompt.choices.map((choice, index) => (
               <Text key={choice} color={index === selectIndex ? "yellow" : "white"}>{index === selectIndex ? "› " : "  "}{choice}</Text>
             ))}
+            {isChoicePrompt(currentPrompt) && (
+              <Box flexDirection="column">
+                <Text>
+                  › filter: {choiceQuery}<Text color="yellow">█</Text>
+                  <Text dimColor> · {filteredChoices.length}/{choiceOptions.length} match{filteredChoices.length === 1 ? "" : "es"}</Text>
+                  {currentPrompt.type === "multi-select" ? <Text dimColor> · {choiceSelected.length} selected</Text> : null}
+                </Text>
+                <Text dimColor>{currentPrompt.type === "multi-select" ? "type to filter · ↑/↓ move · space toggles · enter continues" : "type to filter · ↑/↓ move · enter chooses"}</Text>
+                {choiceLoading ? <Text color="yellow">Loading choices…</Text> : null}
+                {!choiceLoading && filteredChoices.length === 0 ? <Text color="red">No matches.</Text> : null}
+                {!choiceLoading && visibleChoices.map(({ item: choice, index }) => (
+                  <Text key={`${choice.value}-${index}`} color={index === selectIndex ? "yellow" : "white"}>
+                    {index === selectIndex ? "› " : "  "}
+                    {currentPrompt.type === "multi-select" ? `[${choiceSelected.includes(choice.value) ? "x" : " "}] ` : ""}
+                    {choice.label}
+                    {choice.description ? <Text dimColor> — {choice.description}</Text> : null}
+                  </Text>
+                ))}
+              </Box>
+            )}
             {hint ? <Text color="red">{hint}</Text> : null}
           </Box>
         </Box>

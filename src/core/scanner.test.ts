@@ -21,25 +21,46 @@ test("adapter paths and client expansion stay stable", () => {
   assert.equal(adapter("codex", { SKILLS_MANAGER_HOME: "/tmp/sm-home" }).globalDir(), "/tmp/sm-home/.codex/skills");
 });
 
-test("scanDir classifies skill dirs, missing SKILL.md, symlinks, broken symlinks, and files", async () => {
+test("scanDir classifies skill dirs, diagnostic missing SKILL.md dirs, symlinks, and broken symlinks", async () => {
   const home = await mkdtemp(join(tmpdir(), "sm-scan-"));
   await makeSkill(join(home, "normal"));
   await mkdir(join(home, "missing"));
+  await mkdir(join(home, ".git"));
+  await mkdir(join(home, ".husky"));
+  await writeFile(join(home, ".gitignore"), "junk");
+  await writeFile(join(home, ".local-note"), "junk");
+  await writeFile(join(home, ".DS_Store"), "junk");
   await writeFile(join(home, "file.txt"), "plain");
   await symlink(join(home, "normal"), join(home, "link"), "dir");
   await symlink(join(home, "nope"), join(home, "broken"), "dir");
 
-  const result = await scanDir(home);
+  const result = await scanDir(home, { includeNonSkills: true });
   const types = Object.fromEntries(result.entries.map((entry) => [entry.name, entry.type]));
 
   assert.equal(types.normal, "skill_dir");
   assert.equal(types.missing, "missing_skill_md");
-  assert.equal(types["file.txt"], "file");
+  assert.equal(types[".git"], undefined);
+  assert.equal(types[".husky"], undefined);
+  assert.equal(types[".gitignore"], undefined);
+  assert.equal(types[".local-note"], undefined);
+  assert.equal(types[".DS_Store"], undefined);
+  assert.equal(types["file.txt"], undefined);
   assert.equal(types.link, "symlink_skill");
   assert.equal(types.broken, "broken_symlink");
 
   const broken = result.entries.find((entry) => entry.name === "broken");
   assert.equal(broken?.resolved, undefined);
+});
+
+test("scanDir defaults to skill-relevant entries and suppresses obvious non-skill files", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sm-scan-relevant-"));
+  await makeSkill(join(home, "normal"));
+  await mkdir(join(home, "workspace"));
+  await writeFile(join(home, "package.json"), "{}");
+  await writeFile(join(home, "pnpm-lock.yaml"), "lockfileVersion: 9\n");
+
+  const result = await scanDir(home);
+  assert.deepEqual(result.entries.map((entry) => `${entry.type}:${entry.name}`), ["skill_dir:normal"]);
 });
 
 test("classifyEntry resolves valid symlinks through the filesystem", async () => {

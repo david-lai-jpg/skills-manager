@@ -3,7 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { actualRendered } from "./materializer.js";
 import { adapter } from "./adapters.js";
 import { expandUser, inboxDir, logsRoot, manifestsRoot, presetsRoot, skillsRoot, storeRoot, transactionsRoot, type Env } from "./paths.js";
-import { VERSION, writeJson } from "./store.js";
+import { shouldSkipLocalJunkPath, VERSION, writeJson } from "./store.js";
 
 export function backupRoot(exportPath: string, env: Env = process.env): string {
   const path = resolve(expandUser(exportPath, env));
@@ -72,7 +72,11 @@ export async function copyIfExists(src: string, dst: string): Promise<void> {
     return;
   }
   await mkdir(dirname(dst), { recursive: true });
-  await cp(src, dst, { recursive: true, force: true });
+  await cp(src, dst, {
+    recursive: true,
+    force: true,
+    filter: async (source) => !shouldSkipLocalJunkPath(source, { root: src, allowManagedDotRoot: true })
+  });
 }
 
 export async function exportBackup(exportPath: string, env: Env = process.env): Promise<Record<string, unknown>> {

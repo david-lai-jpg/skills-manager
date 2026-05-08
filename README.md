@@ -362,6 +362,10 @@ Keyboard controls are intentionally plain:
 
 - arrow keys or `j`/`k` move through menus, select prompts, and output panes
 - enter chooses the highlighted action or submits the current prompt
+- skill and preset prompts use searchable option lists instead of forcing you to
+  memorize IDs
+- multi-select prompts use space to toggle entries, so preset add/remove/delete
+  can operate on batches
 - `y`/`n` answer simple confirmations
 - high-impact apply/export flows require typing the exact shown word
 - escape cancels a prompt
@@ -378,8 +382,10 @@ human summary and then show the full deterministic JSON payload below it.
 Current TUI-backed workflows cover:
 
 - scan/import/adopt/migrate actions for first setup and ongoing intake
-- state inspection plus enable/disable desired-state edits
-- preset list/show/create/capture/add/remove/rename/delete/apply actions
+- state inspection plus searchable enable/disable desired-state edits
+- preset list/show/create/capture/add/remove/rename/delete/apply actions, with
+  searchable preset selection and multi-select skill/preset batch edits where
+  the underlying action supports multiple targets
 - render reconciliation through diff/materialize and rollback actions
 - doctor audits for scan conflicts, desired/rendered issues, and preset issues
 - backup/restore previews and applies, with rendered outputs treated as
@@ -597,6 +603,14 @@ canonical state.
 - Falls back to copy if symlinks fail.
 - Never overwrites unmanaged real directories.
 - Only removes entries previously created by `skills-manager`.
+- Ignores all dotfiles/dotdirs plus local junk such as caches, virtualenvs, and
+  `node_modules` during scan, hashing, copy, migration, and backup exports.
+  The only dot directories allowed as copy roots are the explicit managed
+  locations: `.agents`, `.claude`, and `.codex`.
+- Treats a directory as a skill only when it contains the standard `SKILL.md`
+  manifest.
+- `scan` output is skill-relevant by default. Use `--include-non-skills` only
+  when you want diagnostic entries for directories missing `SKILL.md`.
 - Mutations are dry-runnable or rollbackable.
 - Import/adopt/migrate never auto-enable skills globally.
 - Preset apply never materializes by itself.
@@ -685,7 +699,7 @@ Restart Codex. This is not reliably hot-loaded.
 Inspect skill-related directories and classify what is there.
 
 ```bash
-skills-manager scan [--json]
+skills-manager scan [--json] [--include-non-skills]
 ```
 
 What it reads:

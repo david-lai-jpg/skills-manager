@@ -9,8 +9,24 @@ import type { Manifest, Scope } from "./schemas.js";
 
 export const VERSION = 1;
 const FALLBACK_OWNER_PREFIX = "skill.local";
+export const ALLOWED_MANAGED_DOT_ROOTS = new Set([".agents", ".claude", ".codex"]);
 export const SKIP_DIRS = new Set([".git", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules", ".venv", "venv"]);
-export const SKIP_FILES = new Set([".DS_Store", "skill.json", ".skills-manager.json"]);
+export const LOCAL_JUNK_FILES = new Set([".DS_Store", ".gitignore", ".gitattributes", ".gitmodules"]);
+export const SKIP_FILES = new Set([...LOCAL_JUNK_FILES, "skill.json", ".skills-manager.json"]);
+
+export function shouldSkipLocalJunkName(name: string, options: { allowManagedDotRoot?: boolean } = {}): boolean {
+  if (options.allowManagedDotRoot && ALLOWED_MANAGED_DOT_ROOTS.has(name)) {
+    return false;
+  }
+  return name.startsWith(".") || SKIP_DIRS.has(name);
+}
+
+export function shouldSkipLocalJunkPath(path: string, options: { root?: string; allowManagedDotRoot?: boolean } = {}): boolean {
+  if (options.root && resolve(path) === resolve(options.root)) {
+    return false;
+  }
+  return shouldSkipLocalJunkName(basename(path), { allowManagedDotRoot: options.allowManagedDotRoot ?? false });
+}
 
 function loadEnvFiles(): void {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -80,7 +96,7 @@ async function collectHashFiles(root: string, current: string, result: string[])
   const dirs = entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .filter((name) => !SKIP_DIRS.has(name) && !name.startsWith(".git"))
+    .filter((name) => !shouldSkipLocalJunkName(name))
     .sort();
   for (const dir of dirs) {
     await collectHashFiles(root, join(current, dir), result);
@@ -89,7 +105,7 @@ async function collectHashFiles(root: string, current: string, result: string[])
   const files = entries
     .filter((entry) => entry.isFile() || entry.isSymbolicLink())
     .map((entry) => entry.name)
-    .filter((name) => !SKIP_FILES.has(name))
+    .filter((name) => !SKIP_FILES.has(name) && !shouldSkipLocalJunkName(name))
     .sort();
   for (const file of files) {
     const path = join(current, file);
@@ -130,8 +146,7 @@ export async function copySkillTree(src: string, dst: string): Promise<void> {
   await cp(src, dst, {
     recursive: true,
     filter: async (source) => {
-      const name = basename(source);
-      if (SKIP_DIRS.has(name) || name === ".DS_Store") {
+      if (shouldSkipLocalJunkPath(source, { root: src })) {
         return false;
       }
       return true;
@@ -288,6 +303,7 @@ export async function allSkills(env: Env = process.env): Promise<Record<string, 
   const children = (await readdir(root, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
+    .filter((name) => !shouldSkipLocalJunkName(name))
     .sort();
 
   for (const child of children) {

@@ -1,7 +1,7 @@
 import { lstat, realpath, readdir, readlink, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { adapter } from "./adapters.js";
-import { contentHash, isSkillDir } from "./store.js";
+import { contentHash, isSkillDir, shouldSkipLocalJunkName } from "./store.js";
 import { inboxDir, skillsRoot, type Env } from "./paths.js";
 
 export type ScanEntry = {
@@ -19,6 +19,10 @@ export type ScanDirResult = {
   exists: boolean;
   entries: ScanEntry[];
   error?: string;
+};
+
+export type ScanOptions = {
+  includeNonSkills?: boolean;
 };
 
 export async function classifyEntry(path: string): Promise<ScanEntry> {
@@ -60,7 +64,14 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-export async function scanDir(path: string): Promise<ScanDirResult> {
+function includeScanEntry(entry: ScanEntry, options: ScanOptions): boolean {
+  if (entry.type === "skill_dir" || entry.type === "symlink_skill" || entry.type === "broken_symlink" || entry.type === "symlink_non_skill" || entry.type === "error") {
+    return true;
+  }
+  return Boolean(options.includeNonSkills && entry.type === "missing_skill_md");
+}
+
+export async function scanDir(path: string, options: ScanOptions = {}): Promise<ScanDirResult> {
   const result: ScanDirResult = { path, exists: await exists(path), entries: [] };
   if (!result.exists) {
     return result;
@@ -70,8 +81,8 @@ export async function scanDir(path: string): Promise<ScanDirResult> {
     result.error = "not a directory";
     return result;
   }
-  const entries = (await readdir(path)).sort();
-  result.entries = await Promise.all(entries.map((entry) => classifyEntry(join(path, entry))));
+  const entries = (await readdir(path)).filter((entry) => !shouldSkipLocalJunkName(entry)).sort();
+  result.entries = (await Promise.all(entries.map((entry) => classifyEntry(join(path, entry))))).filter((entry) => includeScanEntry(entry, options));
   return result;
 }
 
@@ -83,7 +94,7 @@ export type ScanResult = {
   };
 };
 
-export async function scan(options: { project?: string; env?: Env } = {}): Promise<ScanResult> {
+export async function scan(options: { project?: string; env?: Env; includeNonSkills?: boolean } = {}): Promise<ScanResult> {
   const env = options.env ?? process.env;
   const locations: Record<string, string> = {
     inbox: inboxDir(env),
@@ -96,7 +107,7 @@ export async function scan(options: { project?: string; env?: Env } = {}): Promi
     locations.codex_project = adapter("codex", env).projectDir(options.project);
   }
 
-  const scannedEntries = await Promise.all(Object.entries(locations).map(async ([name, path]) => [name, await scanDir(path)] as const));
+  const scannedEntries = await Promise.all(Object.entries(locations).map(async ([name, path]) => [name, await scanDir(path, { includeNonSkills: options.includeNonSkills ?? false })] as const));
   const scanned = Object.fromEntries(scannedEntries);
   const names: Record<string, string[]> = {};
   const hashes: Record<string, string[]> = {};

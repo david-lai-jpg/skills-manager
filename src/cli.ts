@@ -72,8 +72,9 @@ export function buildProgram(): Command {
     .command("scan")
     .option("--json")
     .option("--project <path>")
-    .action(async (options: { json?: boolean; project?: string }) => {
-      process.stdout.write(stableJson(await scan(options.project ? { project: options.project } : {})));
+    .option("--include-non-skills", "include non-skill directories missing SKILL.md for diagnostics")
+    .action(async (options: { json?: boolean; project?: string; includeNonSkills?: boolean }) => {
+      process.stdout.write(stableJson(await scan({ ...(options.project ? { project: options.project } : {}), includeNonSkills: options.includeNonSkills ?? false })));
     });
 
   program
@@ -192,7 +193,7 @@ export function buildProgram(): Command {
     .command("doctor")
     .option("--project <path>")
     .action(async (options: { project?: string }) => {
-      const scanned = await scan(options.project ? { project: options.project } : {});
+      const scanned = await scan({ ...(options.project ? { project: options.project } : {}), includeNonSkills: true });
       const issues: Array<Record<string, unknown>> = [];
       for (const [location, value] of Object.entries(scanned.locations)) {
         for (const entry of value.entries) {

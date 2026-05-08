@@ -46,7 +46,7 @@ Do not treat rendered client skill directories as source. The source of truth is
 - `src/core/transactions.ts` writes materialization journals and rolls back manager-created render changes.
 - `src/core/action-log.ts` appends JSONL records for applied CLI/core mutations. Dry-runs and previews do not log.
 - `src/core/backup.ts` exports/restores the managed store, manifests, transactions, presets, logs, and inbox; rendered client directories are metadata-only in regular backups. `pre-migration-backup` is the separate raw-copy escape hatch for `~/.claude/skills`, `$CODEX_HOME/skills`/`~/.codex/skills`, and `~/.agents/skills`.
-- `src/tui.tsx` owns the Ink React TUI. It exposes every CLI capability through direct core-module calls, typed confirmations for high-impact actions, scrollable output panes, and human-readable result summaries above full JSON. Keep business rules in core modules where practical; keep Ink rendering thin and test action/prompt/execution helpers directly.
+- `src/tui.tsx` owns the Ink React TUI. It exposes every CLI capability through direct core-module calls, searchable skill/preset selection prompts, batch multi-select where actions support multiple targets, typed confirmations for high-impact actions, scrollable output panes, and human-readable result summaries above full JSON. Keep business rules in core modules where practical; keep Ink rendering thin and test action/prompt/execution helpers directly.
 - `src/cli.ts` is the Commander boundary. Bare invocation launches the TUI; subcommands expose automation. Keep business rules in modules, not buried in CLI handlers.
 
 ## State model vocabulary
@@ -112,7 +112,7 @@ Prefer `mkdtemp`/temporary homes in tests and set `SKILLS_MANAGER_HOME` inside t
 - Backup/restore must treat rendered Claude/Codex outputs as metadata, not canonical state.
 - Pre-migration backup must be visibly distinct from regular backup and raw-copy rendered Claude/Codex skill dirs plus the agents inbox.
 - Backup/restore must include presets and action logs with the managed store.
-- `copySkillTree` and `contentHash` must ignore local junk such as `.git`, `__pycache__`, `.pytest_cache`, and `.DS_Store`.
+- Scan, diff/materialize rendered-state reads, backup export, `copySkillTree`, and `contentHash` must ignore all dotfiles/dotdirs plus local junk such as `__pycache__`, `.pytest_cache`, and `node_modules`. Backup copy filters may allow `.agents`, `.claude`, or `.codex` only as explicit source roots; dot children such as `.system` and `.husky` must still be excluded. Default `scan` output should be skill-relevant; use explicit diagnostic paths for directories missing `SKILL.md`.
 - Manifest writes should remain atomic via `writeJson` and stable via sorted JSON keys.
 - Preset writes should be atomic, schema-validated, alias-resolved when mutating entries, and dry-runnable where the CLI advertises dry-run behavior.
 - Preset delete removes only the preset JSON definition; it must not remove managed skills, manifests, rendered output, transactions, or backups.

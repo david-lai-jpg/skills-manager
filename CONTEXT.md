@@ -93,6 +93,8 @@ V1 TUI facts:
 - TUI rendering stays thin; action coverage, prompt definitions, execution helpers, output summaries, and light Ink render behavior are test-covered.
 - Every CLI capability is present in the TUI action catalog: scan, import, adopt, migrate, state, enable, disable, diff, materialize, doctor, rollback, backup, pre-migration-backup, restore, and all preset subcommands.
 - Empty-store users see the guided scan → backup/pre-migration-backup → import/migrate → enable/preset → materialize → doctor path directly in the menu.
+- Skill and preset prompts use searchable option lists for enable/disable, preset show/add/remove/rename/delete/apply, and similar selection-heavy flows.
+- Preset add/remove skill prompts and preset delete prompts support multi-select batch operations with space toggles.
 - Output panes scroll with arrow keys, `j`/`k`, and PageUp/PageDown.
 - Result panes start with a compact human summary and keep the full deterministic JSON below it.
 
@@ -100,6 +102,8 @@ Current global keys/behaviors:
 
 - arrows or `j`/`k` navigate menus, select prompts, and output panes.
 - enter selects the highlighted action or submits the current prompt.
+- searchable select prompts filter as the user types.
+- multi-select prompts use space to toggle the highlighted item, then enter to continue.
 - `y`/`n` answer simple confirmations.
 - typed-confirm prompts require the exact shown word; blank keeps preview/cancel behavior.
 - escape cancels prompts.
@@ -109,7 +113,7 @@ Current global keys/behaviors:
 Deferred TUI UX backlog:
 
 - true first-run wizard with staged setup transitions
-- `/` filtering/search across action menus, skills, presets, scan results, doctor issues, and transactions
+- `/` filtering/search across action menus, scan results, doctor issues, and transactions
 - richer managed-skills dashboards instead of only action-driven forms
 - client tabs/modes beyond current prompt-driven `all`/`claude`/`codex` selection
 - incompatible-skill visibility toggles
