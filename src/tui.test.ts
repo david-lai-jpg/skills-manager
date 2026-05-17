@@ -15,6 +15,7 @@ import {
   presetAddSkillChoices,
   presetRemoveSkillChoices,
   SkillsManagerApp,
+  TUI_RENDER_OPTIONS,
   TUI_ACTIONS,
   formatTuiOutput,
   promptsForAction,
@@ -38,6 +39,8 @@ async function waitForFrame(instance: { lastFrame: () => string | undefined }, p
   }
   return instance.lastFrame() ?? "";
 }
+
+const DOWN_ARROW = "\u001B[B";
 
 function stripAnsi(value: string): string {
   return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
@@ -104,6 +107,11 @@ test("Ink TUI renders a real interactive menu", () => {
   instance.cleanup();
 });
 
+test("bare TUI launches in the alternate screen buffer", () => {
+  assert.equal(TUI_RENDER_OPTIONS.alternateScreen, true);
+  assert.equal(TUI_RENDER_OPTIONS.exitOnCtrlC, true);
+});
+
 test("Ink TUI gives empty-store users a first-run path", async () => {
   const oldHome = process.env.SKILLS_MANAGER_HOME;
   process.env.SKILLS_MANAGER_HOME = await mkdtemp(join(tmpdir(), "sm-ink-first-run-"));
@@ -128,6 +136,9 @@ test("TUI action prompts expose mutating confirmation and scrolling-friendly out
   assert.deepEqual(promptsForAction("restore").map((prompt) => prompt.name), ["from", "mode", "confirmRestore"]);
   assert.equal(promptsForAction("rollback").find((prompt) => prompt.name === "confirmRollback")?.type, "typed-confirm");
   assert.equal(promptsForAction("enable").find((prompt) => prompt.name === "skill")?.type, "search-select");
+  assert.deepEqual(promptsForAction("preset-add").map((prompt) => prompt.name), ["name", "presetList", "skills", "dryRun"]);
+  assert.deepEqual(promptsForAction("preset-remove").map((prompt) => prompt.name), ["name", "presetList", "skills", "dryRun"]);
+  assert.equal(promptsForAction("preset-add").find((prompt) => prompt.name === "presetList")?.message, "Preset skill list to edit");
   assert.equal(promptsForAction("preset-add").find((prompt) => prompt.name === "skills")?.type, "multi-select");
   assert.deepEqual(visibleOutput("a\nb\nc\nd", 1, 2), ["b", "c"]);
 });
@@ -164,7 +175,9 @@ test("TUI managed skill choices include symlinked managed skill dirs with SKILL.
 
     const choices = await managedSkillChoices();
 
-    assert.equal(choices.find((choice) => choice.label === "codex-insights")?.value, "skill.example.codex-insights");
+    const choice = choices.find((item) => item.label === "codex-insights");
+    assert.equal(choice?.value, "skill.example.codex-insights");
+    assert.equal(choice?.description, "Claude+Codex");
   });
 });
 
@@ -184,7 +197,7 @@ test("TUI preset mutations accept multi-selected skill and preset values", async
     const added = await executeTuiAction("preset-add", {
       name: "daily",
       skills: ["skill.example.alpha", "skill.example.beta"],
-      mode: "enable",
+      presetList: "Edit Enabled Skill List",
       dryRun: true
     });
     assert.equal((added as { ok?: boolean }).ok, true);
@@ -216,7 +229,7 @@ test("TUI preset skill pickers lock existing entries on add and narrow remove ch
     assert.deepEqual(addChoices.find((choice) => choice.value === "skill.example.alpha"), {
       value: "skill.example.alpha",
       label: "alpha",
-      description: "skill.example.alpha · Claude+Codex · already in preset",
+      description: "Claude+Codex · already in preset",
       selected: true,
       disabled: true
     });
@@ -279,9 +292,9 @@ test("Ink TUI requires typed confirmation before applying migration mode", async
   try {
     instance.stdin.write("\r");
     await settle();
-    assert.match(instance.lastFrame() ?? "", /Mode/);
+    assert.match(instance.lastFrame() ?? "", /Preview or apply/);
 
-    instance.stdin.write("j");
+    instance.stdin.write(DOWN_ARROW);
     await settle();
     instance.stdin.write("\r");
     await settle();
@@ -313,7 +326,7 @@ test("Ink TUI output panes scroll instead of truncating all content away", async
     const firstFrame = await waitForFrame(instance, /Scan skill locations result/);
     assert.match(firstFrame, /Scan skill locations result/);
 
-    instance.stdin.write("j");
+    instance.stdin.write(DOWN_ARROW);
     await settle();
     const scrolledFrame = instance.lastFrame() ?? "";
     assert.notEqual(scrolledFrame, firstFrame);
@@ -340,6 +353,38 @@ test("Ink TUI action menu supports focused filtering", async () => {
   } finally {
     instance.cleanup();
   }
+});
+
+test("Ink TUI choice filters treat j and k as text, not navigation", async () => {
+  await withTempHome("sm-ink-choice-filter-keys-", async (home) => {
+    await mkdir(join(home, ".agents", "skills-store", "presets"), { recursive: true });
+    await writeFile(join(home, ".agents", "skills-store", "presets", "jk-helper.json"), JSON.stringify({
+      version: 1,
+      name: "jk-helper",
+      description: "",
+      tags: [],
+      enable: [],
+      disable: [],
+      clients: {
+        claude: { enable: [], disable: [] },
+        codex: { enable: [], disable: [] }
+      }
+    }));
+    const TestApp = SkillsManagerApp as unknown as ComponentType<{ initialAction: string }>;
+    const instance = render(createElement(TestApp, { initialAction: "preset-show" }));
+    try {
+      await waitForFrame(instance, /Preset: show/);
+      instance.stdin.write("\r");
+      await waitForFrame(instance, /Preset/);
+      await waitForFrame(instance, /jk-helper/);
+      instance.stdin.write("jk");
+      const frame = stripAnsi(await waitForFrame(instance, /filter: jk/));
+      assert.match(frame, /filter: jk/);
+      assert.match(frame, /jk-helper/);
+    } finally {
+      instance.cleanup();
+    }
+  });
 });
 
 test("Ink TUI output panes support line filtering and top/bottom navigation", async () => {

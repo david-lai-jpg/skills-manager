@@ -305,7 +305,7 @@ Behavior:
 - `preset remove` mutates by default and supports `--dry-run`.
 - `preset add/remove` accept multiple skills atomically.
 - If any skill reference is unknown or ambiguous, the whole add/remove command writes nothing.
-- `preset remove` targets one mode, defaulting to `enable`.
+- `preset add/remove` target either the preset's enabled skill list or disabled skill list, defaulting to the enabled list.
 - Presets may include explicit disable masks.
 - `preset rename` is dry-run by default and requires `--apply`.
 - `preset delete` is dry-run by default and requires `--apply`.

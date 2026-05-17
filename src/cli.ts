@@ -287,7 +287,7 @@ export function buildProgram(): Command {
     .command("add")
     .argument("<name>")
     .argument("<skills...>")
-    .option("--mode <mode>", "enable or disable", "enable")
+    .option("--mode <mode>", "preset skill list to edit: enable means enabled skills, disable means disabled skills", "enable")
     .option("--dry-run")
     .action(async (name: string, skills: string[], options: { mode: string; dryRun?: boolean }) => {
       emitResult(await addEntries(name, skills, { mode: parsePresetMode(options.mode), dryRun: options.dryRun ?? false, surface: "cli" }));
@@ -296,7 +296,7 @@ export function buildProgram(): Command {
     .command("remove")
     .argument("<name>")
     .argument("<skills...>")
-    .option("--mode <mode>", "enable or disable", "enable")
+    .option("--mode <mode>", "preset skill list to edit: enable means enabled skills, disable means disabled skills", "enable")
     .option("--dry-run")
     .action(async (name: string, skills: string[], options: { mode: string; dryRun?: boolean }) => {
       emitResult(await removeEntries(name, skills, { mode: parsePresetMode(options.mode), dryRun: options.dryRun ?? false, surface: "cli" }));

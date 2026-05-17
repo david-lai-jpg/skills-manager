@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactElement } from "react";
-import { Box, Text, render, useApp, useInput } from "ink";
+import { Box, Text, render, useApp, useInput, useWindowSize, type RenderOptions } from "ink";
 import { expandClients } from "./core/adapters.js";
 import { dryRunExport, dryRunPreMigrationBackup, exportBackup, exportPreMigrationBackup, restoreBackup } from "./core/backup.js";
 import { diff as materializerDiff, materialize } from "./core/materializer.js";
@@ -68,8 +68,8 @@ export const TUI_ACTIONS: Array<{ value: TuiAction; name: string; description: s
   { value: "preset-show", name: "Preset: show", description: "Inspect a preset and stale alias/unknown ID issues." },
   { value: "preset-create", name: "Preset: create empty", description: "Create an empty preset template." },
   { value: "preset-capture", name: "Preset: capture scope", description: "Create a preset from an existing global/project manifest." },
-  { value: "preset-add", name: "Preset: add skills", description: "Add enable/disable entries to a preset." },
-  { value: "preset-remove", name: "Preset: remove skills", description: "Remove enable/disable entries from a preset." },
+  { value: "preset-add", name: "Preset: add skills", description: "Add skills to a preset's enabled or disabled skill list." },
+  { value: "preset-remove", name: "Preset: remove skills", description: "Remove skills from a preset's enabled or disabled skill list." },
   { value: "preset-rename", name: "Preset: rename", description: "Preview/apply renaming a preset JSON file." },
   { value: "preset-delete", name: "Preset: delete", description: "Preview/apply deleting only the preset JSON definition." },
   { value: "preset-apply", name: "Preset: apply to manifest", description: "Stamp preset entries into global/project manifests; does not render." },
@@ -96,6 +96,11 @@ export type ChoiceOption = {
 };
 
 type TuiActionItem = { value: TuiAction; name: string; description: string };
+
+export const TUI_RENDER_OPTIONS = {
+  exitOnCtrlC: true,
+  alternateScreen: true
+} satisfies RenderOptions;
 
 export function tuiActionCoverage(): string[] {
   return TUI_ACTIONS.map((action) => action.value).filter((value) => value !== "quit").sort();
@@ -179,7 +184,7 @@ export async function managedSkillChoices(): Promise<ChoiceOption[]> {
       return {
         value: meta.id,
         label: skillAliasLabel(meta),
-        description: `${meta.id} · ${clients}`
+        description: clients
       };
     });
 }
@@ -193,7 +198,8 @@ type PresetLike = {
 };
 
 function presetModeFromAnswers(answers: Answers): PresetMode {
-  return answerString(answers, "mode", "enable") === "disable" ? "disable" : "enable";
+  const raw = answerString(answers, "presetList", answerString(answers, "mode", "enable")).toLowerCase();
+  return raw === "disable" || raw.includes("disabled") ? "disable" : "enable";
 }
 
 function managedSkillChoice(meta: SkillMeta, descriptionSuffix = ""): ChoiceOption {
@@ -204,7 +210,7 @@ function managedSkillChoice(meta: SkillMeta, descriptionSuffix = ""): ChoiceOpti
   return {
     value: meta.id,
     label: skillAliasLabel(meta),
-    description: `${meta.id} · ${clients}${descriptionSuffix}`
+    description: `${clients}${descriptionSuffix}`
   };
 }
 
@@ -312,14 +318,14 @@ export function promptsForAction(action: TuiAction): Prompt[] {
       ];
     case "import":
       return [
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
+        { name: "mode", message: "Preview or apply?", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmImport", message: "Type IMPORT to copy inbox skills into the managed store", type: "typed-confirm", phrase: "IMPORT", when: isApplyMode }
       ];
     case "adopt":
       return [{ name: "path", message: "Skill directory path", type: "input", required: true }];
     case "migrate":
       return [
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
+        { name: "mode", message: "Preview or apply?", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmMigrate", message: "Type MIGRATE to copy existing Claude/Codex skills into the managed store", type: "typed-confirm", phrase: "MIGRATE", when: isApplyMode }
       ];
     case "enable":
@@ -334,7 +340,7 @@ export function promptsForAction(action: TuiAction): Prompt[] {
       return [
         { name: "client", message: "Client", type: "select", choices: ["all", "claude", "codex"], default: "all" },
         { name: "project", message: "Project path (blank for global)", type: "input" },
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
+        { name: "mode", message: "Preview or apply?", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmMaterialize", message: "Type MATERIALIZE to render desired state into client skill dirs", type: "typed-confirm", phrase: "MATERIALIZE", when: isApplyMode }
       ];
     case "rollback":
@@ -345,19 +351,19 @@ export function promptsForAction(action: TuiAction): Prompt[] {
     case "backup":
       return [
         { name: "exportPath", message: "Export path", type: "input", default: "./agent-skills-backup" },
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "export"], default: "preview" },
+        { name: "mode", message: "Preview or export?", type: "select", choices: ["preview", "export"], default: "preview" },
         { name: "confirmBackup", message: "Type BACKUP to write the export directory", type: "typed-confirm", phrase: "BACKUP", when: isApplyMode }
       ];
     case "pre-migration-backup":
       return [
         { name: "exportPath", message: "Export path", type: "input", default: "./agent-skills-pre-migration-backup" },
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "export"], default: "preview" },
+        { name: "mode", message: "Preview or export?", type: "select", choices: ["preview", "export"], default: "preview" },
         { name: "confirmPreMigrationBackup", message: "Type PREMIGRATION to raw-copy rendered skill dirs and inbox", type: "typed-confirm", phrase: "PREMIGRATION", when: isApplyMode }
       ];
     case "restore":
       return [
         { name: "from", message: "Backup path", type: "input", required: true },
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
+        { name: "mode", message: "Preview or apply?", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmRestore", message: "Type RESTORE to copy backup state into the managed store", type: "typed-confirm", phrase: "RESTORE", when: isApplyMode }
       ];
     case "preset-show":
@@ -378,14 +384,14 @@ export function promptsForAction(action: TuiAction): Prompt[] {
     case "preset-add":
       return [
         { name: "name", message: "Preset", type: "search-select", source: presetChoices, required: true },
-        { name: "mode", message: "Mode", type: "select", choices: ["enable", "disable"], default: "enable" },
+        { name: "presetList", message: "Preset skill list to edit", type: "select", choices: ["Edit Enabled Skill List", "Edit Disabled Skill List"], default: "Edit Enabled Skill List" },
         { name: "skills", message: "Skills", type: "multi-select", source: presetAddSkillChoices, required: true },
         { name: "dryRun", message: "Dry-run only?", type: "confirm", default: false }
       ];
     case "preset-remove":
       return [
         { name: "name", message: "Preset", type: "search-select", source: presetChoices, required: true },
-        { name: "mode", message: "Mode", type: "select", choices: ["enable", "disable"], default: "enable" },
+        { name: "presetList", message: "Preset skill list to edit", type: "select", choices: ["Edit Enabled Skill List", "Edit Disabled Skill List"], default: "Edit Enabled Skill List" },
         { name: "skills", message: "Skills", type: "multi-select", source: presetRemoveSkillChoices, required: true },
         { name: "dryRun", message: "Dry-run only?", type: "confirm", default: false }
       ];
@@ -393,13 +399,13 @@ export function promptsForAction(action: TuiAction): Prompt[] {
       return [
         { name: "oldName", message: "Old preset", type: "search-select", source: presetChoices, required: true },
         { name: "newName", message: "New preset name", type: "input", required: true },
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
+        { name: "mode", message: "Preview or apply?", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmRename", message: "Type RENAME to rename the preset JSON file", type: "typed-confirm", phrase: "RENAME", when: isApplyMode }
       ];
     case "preset-delete":
       return [
         { name: "names", message: "Presets", type: "multi-select", source: presetChoices, required: true },
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
+        { name: "mode", message: "Preview or apply?", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmDelete", message: "Type DELETE to delete only the preset JSON file", type: "typed-confirm", phrase: "DELETE", when: isApplyMode }
       ];
     case "preset-apply":
@@ -409,7 +415,7 @@ export function promptsForAction(action: TuiAction): Prompt[] {
         { name: "project", message: "Project path (only used for project scope)", type: "input" },
         { name: "client", message: "Client", type: "select", choices: ["all", "claude", "codex"], default: "all" },
         { name: "replace", message: "Replace target manifest buckets?", type: "confirm", default: false },
-        { name: "mode", message: "Mode", type: "select", choices: ["preview", "apply"], default: "preview" },
+        { name: "mode", message: "Preview or apply?", type: "select", choices: ["preview", "apply"], default: "preview" },
         { name: "confirmPresetApply", message: "Type APPLY to stamp preset entries into manifests", type: "typed-confirm", phrase: "APPLY", when: isApplyMode }
       ];
     default:
@@ -503,7 +509,7 @@ export async function executeTuiAction(action: TuiAction, answers: Answers = {})
     return capturePreset(answerString(answers, "name"), scope, { ...(scope === "project" ? optionalProject(answers) : {}), dryRun: Boolean(answers.dryRun), surface: "tui" });
   }
   if (action === "preset-add" || action === "preset-remove") {
-    const mode = answerString(answers, "mode", "enable") === "disable" ? "disable" : "enable";
+    const mode = presetModeFromAnswers(answers);
     return action === "preset-add"
       ? addEntries(answerString(answers, "name"), csv(answers, "skills"), { mode, dryRun: Boolean(answers.dryRun), surface: "tui" })
       : removeEntries(answerString(answers, "name"), csv(answers, "skills"), { mode, dryRun: Boolean(answers.dryRun), surface: "tui" });
@@ -763,6 +769,7 @@ type SkillsManagerAppProps = {
 
 export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppProps = {}): ReactElement {
   const { exit } = useApp();
+  const { columns, rows } = useWindowSize();
   const initialMenuIndex = Math.max(0, TUI_ACTIONS.findIndex((item) => item.value === initialAction));
   const [screen, setScreen] = useState<Screen>("menu");
   const [menuIndex, setMenuIndex] = useState(initialMenuIndex);
@@ -984,9 +991,9 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
         } else if (key.backspace || key.delete) {
           setMenuQuery((value) => value.slice(0, -1));
           setMenuIndex(0);
-        } else if (key.upArrow || input === "k") {
+        } else if (key.upArrow) {
           setMenuIndex((value) => Math.max(0, value - 1));
-        } else if (key.downArrow || input === "j") {
+        } else if (key.downArrow) {
           setMenuIndex((value) => Math.min(Math.max(0, filteredMenuActions.length - 1), value + 1));
         } else if (key.return) {
           const action = filteredMenuActions[menuIndex];
@@ -1003,9 +1010,9 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
         setMenuIndex(0);
       } else if (input === "q") {
         exit();
-      } else if (key.upArrow || input === "k") {
+      } else if (key.upArrow) {
         setMenuIndex((value) => Math.max(0, value - 1));
-      } else if (key.downArrow || input === "j") {
+      } else if (key.downArrow) {
         setMenuIndex((value) => Math.min(Math.max(0, filteredMenuActions.length - 1), value + 1));
       } else if (key.return) {
         const action = filteredMenuActions[menuIndex];
@@ -1022,9 +1029,9 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
         if (choiceLoading) {
           return;
         }
-        if (key.upArrow || input === "k") {
+        if (key.upArrow) {
           setSelectIndex((value) => Math.max(0, value - 1));
-        } else if (key.downArrow || input === "j") {
+        } else if (key.downArrow) {
           setSelectIndex((value) => Math.min(Math.max(0, filteredChoices.length - 1), value + 1));
         } else if (currentPrompt.type === "multi-select" && input === " ") {
           const selectedChoice = filteredChoices[selectIndex];
@@ -1049,9 +1056,9 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
           setSelectIndex(0);
         }
       } else if (currentPrompt.type === "select") {
-        if (key.upArrow || input === "k") {
+        if (key.upArrow) {
           setSelectIndex((value) => Math.max(0, value - 1));
-        } else if (key.downArrow || input === "j") {
+        } else if (key.downArrow) {
           setSelectIndex((value) => Math.min(currentPrompt.choices.length - 1, value + 1));
         } else if (key.return) {
           advancePrompt(currentPrompt.choices[selectIndex] ?? currentPrompt.choices[0] ?? "");
@@ -1115,9 +1122,9 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
         setScroll(0);
       } else if (input === "G") {
         setScroll(Math.max(0, currentOutputLines.length - 1));
-      } else if (key.upArrow || input === "k") {
+      } else if (key.upArrow) {
         setScroll((value) => Math.max(0, value - 1));
-      } else if (key.downArrow || input === "j") {
+      } else if (key.downArrow) {
         const total = currentOutputLines.length;
         setScroll((value) => Math.min(Math.max(0, total - 1), value + 1));
       } else if (key.pageUp) {
@@ -1132,7 +1139,7 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
   const selected = filteredMenuActions[menuIndex];
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} width={columns} minHeight={rows}>
       <Text bold color="cyan">skills-manager</Text>
       <Text dimColor>Ink React TUI · arrows navigate · / filters · enter selects · esc/back returns · q quits</Text>
       {screen === "menu" && (
@@ -1213,6 +1220,6 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
 }
 
 export async function runTui(): Promise<void> {
-  const instance = render(<SkillsManagerApp />, { exitOnCtrlC: true });
+  const instance = render(<SkillsManagerApp />, TUI_RENDER_OPTIONS);
   await instance.waitUntilExit();
 }

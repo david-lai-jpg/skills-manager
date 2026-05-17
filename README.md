@@ -482,6 +482,10 @@ skills-manager preset add <name> <skill...> [--mode enable|disable] [--dry-run]
 skills-manager preset remove <name> <skill...> [--mode enable|disable] [--dry-run]
 ```
 
+For preset add/remove, `--mode enable` edits the preset's enabled skill list;
+`--mode disable` edits the preset's disabled skill list. It does not apply the
+preset or render client skill directories.
+
 Rename and delete are dry-run by default. Add `--apply` to mutate:
 
 ```bash
@@ -907,6 +911,9 @@ skills-manager preset delete <name> [--apply]
 skills-manager preset apply <name> --scope global [--client all|claude|codex] [--replace] [--dry-run]
 skills-manager preset apply <name> --scope project --project /path/to/project [--client all|claude|codex] [--replace] [--dry-run]
 ```
+
+For preset add/remove, `--mode enable` edits the preset's enabled skill list;
+`--mode disable` edits the preset's disabled skill list.
 
 What it reads/writes:
 

@@ -1,10 +1,10 @@
 import { cp, lstat, mkdir, readdir, readlink, symlink } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { appendAction } from "./action-log.js";
 import { adapter, type ClientName } from "./adapters.js";
 import { resolveDesired } from "./resolver.js";
 import { skillsRoot } from "./paths.js";
-import { idToDir, markerData, pathUnder, readJson, shouldSkipLocalJunkName, shouldSkipLocalJunkPath, writeJson } from "./store.js";
+import { markerData, pathUnder, pathUnderLexical, readJson, shouldSkipLocalJunkName, shouldSkipLocalJunkPath, skillDirForId, skillIdForDir, writeJson } from "./store.js";
 import { markTransaction, newTransaction, removeManagerCreated, type TransactionAction } from "./transactions.js";
 import type { Env } from "./paths.js";
 
@@ -12,6 +12,7 @@ export type RenderedEntry = {
   path: string;
   managed_skill_id: string | null;
   type: "symlink" | "dir" | "file";
+  target_exists?: boolean;
 };
 
 async function existsByLstat(path: string): Promise<boolean> {
@@ -37,8 +38,8 @@ export async function managedRenderedId(path: string, env: Env = process.env): P
     const info = await lstat(path);
     if (info.isSymbolicLink()) {
       const target = await resolvedLinkTarget(path);
-      if (target && (await pathUnder(target, skillsRoot(env)))) {
-        return basename(target);
+      if (target && (pathUnderLexical(target, skillsRoot(env)) || (await pathUnder(target, skillsRoot(env))))) {
+        return skillIdForDir(target);
       }
       return null;
     }
@@ -66,10 +67,12 @@ export async function actualRendered(renderedDir: string, env: Env = process.env
     if (!info.isDirectory() && !info.isSymbolicLink()) {
       continue;
     }
+    const target = info.isSymbolicLink() ? await resolvedLinkTarget(path) : null;
     out[name] = {
       path,
       managed_skill_id: await managedRenderedId(path, env),
-      type: info.isSymbolicLink() ? "symlink" : "dir"
+      type: info.isSymbolicLink() ? "symlink" : "dir",
+      ...(target ? { target_exists: await existsByLstat(target) } : {})
     };
   }
   return out;
@@ -106,6 +109,9 @@ export async function diff(client: ClientName, options: { project?: string; env?
         actual_managed_skill_id: current.managed_skill_id,
         desired_skill_id: skillId
       });
+    } else if (current.type === "symlink" && current.target_exists === false) {
+      removes.push({ alias, skill_id: current.managed_skill_id, path: current.path, reason: "broken_symlink" });
+      creates.push({ alias, skill_id: skillId, reason: "repair_broken_symlink" });
     }
   }
 
@@ -122,16 +128,17 @@ export async function planActions(client: ClientName, options: { project?: strin
   const d = await diff(client, options);
   const actions: TransactionAction[] = [];
   for (const item of d.removes as Array<{ path: string; skill_id: string }>) {
+    const source = await skillDirForId(item.skill_id, options.env);
     actions.push({
       op: "remove_rendered",
       client,
       target: item.path,
-      source: idToDir(item.skill_id, options.env),
+      source,
       skill_id: item.skill_id
     });
   }
   for (const item of d.creates as Array<{ alias: string; skill_id: string }>) {
-    const source = idToDir(item.skill_id, options.env);
+    const source = await skillDirForId(item.skill_id, options.env);
     actions.push({
       op: "create_symlink",
       client,

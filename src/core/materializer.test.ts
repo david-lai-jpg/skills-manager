@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, mkdir, readlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readlink, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { diff, materialize } from "./materializer.js";
@@ -26,6 +26,22 @@ async function addManagedSkill(home: string, name = "eli5"): Promise<string> {
   return skillId;
 }
 
+async function addSymlinkedManagedSkill(home: string, name = "codex-insights"): Promise<{ skillId: string; linkedSkill: string }> {
+  const env = { SKILLS_MANAGER_HOME: home, OWNER_PREFIX: "skill.test-owner" };
+  const skillId = stableId(name, undefined, env);
+  const externalSkill = join(home, "external", name);
+  const linkedSkill = join(home, ".agents", "skills-store", "skills", name);
+  await makeFixtureSkill(externalSkill);
+  await writeFile(join(externalSkill, "skill.json"), JSON.stringify({
+    id: skillId,
+    aliases: { claude: name, codex: name },
+    compatibility: { claude: true, codex: true }
+  }));
+  await mkdir(join(home, ".agents", "skills-store", "skills"), { recursive: true });
+  await symlink(externalSkill, linkedSkill, "dir");
+  return { skillId, linkedSkill };
+}
+
 test("materialize creates manager-owned links and rollback removes them", async () => {
   const home = await mkdtemp(join(tmpdir(), "sm-materialize-"));
   const env = { SKILLS_MANAGER_HOME: home, OWNER_PREFIX: "skill.test-owner" };
@@ -49,6 +65,42 @@ test("materialize creates manager-owned links and rollback removes them", async 
   const rolledBack = await rollback(applied.transaction_id as string, env);
   assert.equal(rolledBack.ok, true);
   await assert.rejects(lstat(rendered));
+});
+
+test("materialize links to symlinked managed store entries by actual store path", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sm-materialize-symlink-source-"));
+  const env = { SKILLS_MANAGER_HOME: home, OWNER_PREFIX: "skill.test-owner" };
+  const { skillId, linkedSkill } = await addSymlinkedManagedSkill(home);
+  await setSkill("global", skillId, true, { env, surface: "test" });
+
+  const applied = await materialize("codex", { env, surface: "test" });
+  assert.equal(applied.ok, true);
+  const rendered = join(home, ".codex", "skills", "codex-insights");
+  assert.equal(await readlink(rendered), linkedSkill);
+
+  const clean = await diff("codex", { env });
+  assert.deepEqual(clean.creates, []);
+  assert.deepEqual(clean.removes, []);
+  assert.equal((clean.actual as Record<string, { managed_skill_id?: string }>)["codex-insights"]?.managed_skill_id, skillId);
+});
+
+test("materialize repairs old manager-owned rendered links whose store target is missing", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sm-materialize-repair-symlink-"));
+  const env = { SKILLS_MANAGER_HOME: home, OWNER_PREFIX: "skill.test-owner" };
+  const { skillId, linkedSkill } = await addSymlinkedManagedSkill(home);
+  await setSkill("global", skillId, true, { env, surface: "test" });
+  const renderedDir = join(home, ".codex", "skills");
+  const rendered = join(renderedDir, "codex-insights");
+  await mkdir(renderedDir, { recursive: true });
+  await symlink(join(home, ".agents", "skills-store", "skills", skillId), rendered, "dir");
+
+  const preview = await materialize("codex", { env, dryRun: true });
+  assert.deepEqual((preview.diff as { removes: Array<{ reason?: string }> }).removes.map((item) => item.reason), ["broken_symlink"]);
+  assert.deepEqual((preview.diff as { creates: Array<{ reason?: string }> }).creates.map((item) => item.reason), ["repair_broken_symlink"]);
+
+  const applied = await materialize("codex", { env, surface: "test" });
+  assert.equal(applied.ok, true);
+  assert.equal(await readlink(rendered), linkedSkill);
 });
 
 test("materialize removes only manager-owned rendered entries and rollback restores links", async () => {

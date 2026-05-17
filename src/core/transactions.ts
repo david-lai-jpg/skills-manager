@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readlink, rm, symlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { skillsRoot, transactionsRoot, type Env } from "./paths.js";
-import { pathUnder, readJson, writeJson } from "./store.js";
+import { pathUnder, pathUnderLexical, readJson, writeJson } from "./store.js";
 
 export type TransactionAction = {
   op: "create_symlink" | "create_copy" | "remove_rendered";
@@ -66,7 +66,7 @@ export async function isManagerCreated(path: string, env: Env = process.env): Pr
     const info = await lstat(path);
     if (info.isSymbolicLink()) {
       const target = await resolvedLinkTarget(path);
-      return target ? pathUnder(target, skillsRoot(env)) : false;
+      return target ? pathUnderLexical(target, skillsRoot(env)) || (await pathUnder(target, skillsRoot(env))) : false;
     }
     if (info.isDirectory()) {
       const data = await readJson<Record<string, unknown>>(join(path, ".skills-manager.json"), {});

@@ -63,6 +63,12 @@ export function idToDir(skillId: string, env: Env = process.env): string {
   return join(skillsRoot(env), skillId);
 }
 
+export function pathUnderLexical(path: string, parent: string): boolean {
+  const resolvedParent = resolve(parent);
+  const resolvedPath = resolve(path);
+  return resolvedPath === resolvedParent || resolvedPath.startsWith(`${resolvedParent}${sep}`);
+}
+
 export async function ensureStore(env: Env = process.env): Promise<void> {
   for (const path of [skillsRoot(env), manifestsRoot(env), transactionsRoot(env), presetsRoot(env), logsRoot(env)]) {
     await mkdir(path, { recursive: true });
@@ -291,6 +297,39 @@ export async function loadSkillMeta(skillId: string, env: Env = process.env): Pr
 
 export async function writeSkillMeta(skillId: string, meta: SkillMeta, env: Env = process.env): Promise<void> {
   await writeJson(join(idToDir(skillId, env), "skill.json"), meta);
+}
+
+export async function skillIdForDir(path: string): Promise<string> {
+  const metaPath = join(path, "skill.json");
+  if (await exists(metaPath)) {
+    const meta = await readJson<Partial<SkillMeta>>(metaPath, {});
+    if (typeof meta.id === "string" && meta.id) {
+      return meta.id;
+    }
+  }
+  return basename(path);
+}
+
+export async function skillDirForId(skillId: string, env: Env = process.env): Promise<string> {
+  const direct = idToDir(skillId, env);
+  if (await exists(direct)) {
+    return direct;
+  }
+  const root = skillsRoot(env);
+  if (!(await exists(root))) {
+    return direct;
+  }
+  const entries = (await readdir(root, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    if (shouldSkipLocalJunkName(entry.name)) {
+      continue;
+    }
+    const childPath = join(root, entry.name);
+    if ((entry.isDirectory() || entry.isSymbolicLink()) && (await isSkillDir(childPath)) && (await skillIdForDir(childPath)) === skillId) {
+      return childPath;
+    }
+  }
+  return direct;
 }
 
 export async function allSkills(env: Env = process.env): Promise<Record<string, SkillMeta>> {

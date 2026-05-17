@@ -56,6 +56,9 @@ skills-manager restore --from <path> --dry-run
 skills-manager restore --from <path> --apply
 ```
 
+For preset add/remove, `--mode enable` edits the preset's enabled skill list;
+`--mode disable` edits the preset's disabled skill list.
+
 ## Wrapper behavior
 
 1. Inspect with `skills-manager state`, `scan`, `diff`, or `doctor`.
