@@ -200,6 +200,21 @@ test("skill metadata helpers provide stable fallback behavior", async () => {
   });
 });
 
+test("allSkills includes symlinked managed skill dirs when the target has SKILL.md", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sm-meta-link-"));
+  const env = { SKILLS_MANAGER_HOME: home };
+  const externalSkill = join(home, "external-skill");
+  const linkedSkill = join(skillsRoot(env), "codex-insights");
+  await mkdir(externalSkill, { recursive: true });
+  await mkdir(skillsRoot(env), { recursive: true });
+  await writeFile(join(externalSkill, "SKILL.md"), "# Codex Insights\n");
+  await symlink(externalSkill, linkedSkill, "dir");
+
+  const managed = await allSkills(env);
+
+  assert.equal(managed["codex-insights"]?.aliases.codex, "codex-insights");
+});
+
 test("pathUnder compares resolved paths", async () => {
   const home = await mkdtemp(join(tmpdir(), "sm-under-"));
   await mkdir(join(home, "parent", "child"), { recursive: true });

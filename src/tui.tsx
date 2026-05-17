@@ -10,6 +10,7 @@ import {
   capturePreset,
   createPreset,
   deletePreset,
+  loadPreset,
   listPresets,
   removeEntries,
   renamePreset,
@@ -90,6 +91,8 @@ export type ChoiceOption = {
   value: string;
   label: string;
   description?: string;
+  selected?: boolean;
+  disabled?: boolean;
 };
 
 type TuiActionItem = { value: TuiAction; name: string; description: string };
@@ -179,6 +182,79 @@ export async function managedSkillChoices(): Promise<ChoiceOption[]> {
         description: `${meta.id} · ${clients}`
       };
     });
+}
+
+type PresetMode = "enable" | "disable";
+type PresetEntryLike = { id: string; alias?: string };
+type PresetLike = {
+  enable: PresetEntryLike[];
+  disable: PresetEntryLike[];
+  clients: Record<Client, { enable: PresetEntryLike[]; disable: PresetEntryLike[] }>;
+};
+
+function presetModeFromAnswers(answers: Answers): PresetMode {
+  return answerString(answers, "mode", "enable") === "disable" ? "disable" : "enable";
+}
+
+function managedSkillChoice(meta: SkillMeta, descriptionSuffix = ""): ChoiceOption {
+  const clients = [
+    meta.compatibility?.claude ? "Claude" : "",
+    meta.compatibility?.codex ? "Codex" : ""
+  ].filter(Boolean).join("+") || "no compatible clients";
+  return {
+    value: meta.id,
+    label: skillAliasLabel(meta),
+    description: `${meta.id} · ${clients}${descriptionSuffix}`
+  };
+}
+
+function allPresetSkillIds(preset: PresetLike): Set<string> {
+  const ids = new Set<string>();
+  for (const bucket of [
+    preset.enable,
+    preset.disable,
+    preset.clients.claude.enable,
+    preset.clients.claude.disable,
+    preset.clients.codex.enable,
+    preset.clients.codex.disable
+  ]) {
+    for (const entry of bucket) {
+      ids.add(entry.id);
+    }
+  }
+  return ids;
+}
+
+function topLevelPresetEntries(preset: PresetLike, mode: PresetMode): PresetEntryLike[] {
+  return preset[mode];
+}
+
+export async function presetAddSkillChoices(answers: Answers): Promise<ChoiceOption[]> {
+  const presetName = answerString(answers, "name");
+  const [managed, preset] = await Promise.all([allSkills(), loadPreset(presetName) as Promise<PresetLike>]);
+  const existing = allPresetSkillIds(preset);
+  return Object.values(managed)
+    .sort((left, right) => skillAliasLabel(left).localeCompare(skillAliasLabel(right)))
+    .map((meta) => {
+      const choice = managedSkillChoice(meta, existing.has(meta.id) ? " · already in preset" : "");
+      return existing.has(meta.id) ? { ...choice, selected: true, disabled: true } : choice;
+    });
+}
+
+export async function presetRemoveSkillChoices(answers: Answers): Promise<ChoiceOption[]> {
+  const mode = presetModeFromAnswers(answers);
+  const [managed, preset] = await Promise.all([allSkills(), loadPreset(answerString(answers, "name")) as Promise<PresetLike>]);
+  return topLevelPresetEntries(preset, mode).map((entry) => {
+    const meta = managed[entry.id];
+    if (meta) {
+      return managedSkillChoice(meta);
+    }
+    return {
+      value: entry.id,
+      label: entry.alias || entry.id,
+      description: `${entry.id} · missing from managed store`
+    };
+  });
 }
 
 export async function presetChoices(): Promise<ChoiceOption[]> {
@@ -300,11 +376,17 @@ export function promptsForAction(action: TuiAction): Prompt[] {
         { name: "dryRun", message: "Dry-run only?", type: "confirm", default: false }
       ];
     case "preset-add":
+      return [
+        { name: "name", message: "Preset", type: "search-select", source: presetChoices, required: true },
+        { name: "mode", message: "Mode", type: "select", choices: ["enable", "disable"], default: "enable" },
+        { name: "skills", message: "Skills", type: "multi-select", source: presetAddSkillChoices, required: true },
+        { name: "dryRun", message: "Dry-run only?", type: "confirm", default: false }
+      ];
     case "preset-remove":
       return [
         { name: "name", message: "Preset", type: "search-select", source: presetChoices, required: true },
-        { name: "skills", message: "Skills", type: "multi-select", source: managedSkillChoices, required: true },
         { name: "mode", message: "Mode", type: "select", choices: ["enable", "disable"], default: "enable" },
+        { name: "skills", message: "Skills", type: "multi-select", source: presetRemoveSkillChoices, required: true },
         { name: "dryRun", message: "Dry-run only?", type: "confirm", default: false }
       ];
     case "preset-rename":
@@ -711,6 +793,14 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     [choiceOptions, choiceQuery, currentPrompt]
   );
   const visibleChoices = useMemo(() => choiceWindow(filteredChoices, selectIndex), [filteredChoices, selectIndex]);
+  const enabledSelectedCount = useMemo(() => {
+    const enabledValues = new Set(choiceOptions.filter((choice) => !choice.disabled).map((choice) => choice.value));
+    return choiceSelected.filter((value) => enabledValues.has(value)).length;
+  }, [choiceOptions, choiceSelected]);
+  const lockedSelectedCount = useMemo(() => {
+    const lockedValues = new Set(choiceOptions.filter((choice) => choice.disabled).map((choice) => choice.value));
+    return choiceSelected.filter((value) => lockedValues.has(value)).length;
+  }, [choiceOptions, choiceSelected]);
 
   useEffect(() => {
     let cancelled = false;
@@ -747,6 +837,7 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
     void currentPrompt.source(answers).then((choices) => {
       if (!cancelled) {
         setChoiceOptions(choices);
+        setChoiceSelected(choices.filter((choice) => choice.selected).map((choice) => choice.value));
         setChoiceLoading(false);
       }
     }).catch((error) => {
@@ -857,7 +948,8 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
       setHint("Choose an item.");
       return;
     }
-    if (currentPrompt.type === "multi-select" && currentPrompt.required && Array.isArray(value) && value.length === 0) {
+    const enabledChoiceValues = new Set(choiceOptions.filter((choice) => !choice.disabled).map((choice) => choice.value));
+    if (currentPrompt.type === "multi-select" && currentPrompt.required && Array.isArray(value) && value.filter((item) => enabledChoiceValues.has(item)).length === 0) {
       setHint("Choose at least one item.");
       return;
     }
@@ -936,7 +1028,7 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
           setSelectIndex((value) => Math.min(Math.max(0, filteredChoices.length - 1), value + 1));
         } else if (currentPrompt.type === "multi-select" && input === " ") {
           const selectedChoice = filteredChoices[selectIndex];
-          if (selectedChoice) {
+          if (selectedChoice && !selectedChoice.disabled) {
             setChoiceSelected((values) => values.includes(selectedChoice.value)
               ? values.filter((item) => item !== selectedChoice.value)
               : [...values, selectedChoice.value]);
@@ -946,7 +1038,8 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
             const selectedChoice = filteredChoices[selectIndex];
             advancePrompt(selectedChoice?.value ?? "");
           } else {
-            advancePrompt(choiceSelected);
+            const enabledChoiceValues = new Set(choiceOptions.filter((choice) => !choice.disabled).map((choice) => choice.value));
+            advancePrompt(choiceSelected.filter((value) => enabledChoiceValues.has(value)));
           }
         } else if (key.backspace || key.delete) {
           setChoiceQuery((value) => value.slice(0, -1));
@@ -1079,7 +1172,7 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
                 <Text>
                   › filter: {choiceQuery}<Text color="yellow">█</Text>
                   <Text dimColor> · {filteredChoices.length}/{choiceOptions.length} match{filteredChoices.length === 1 ? "" : "es"}</Text>
-                  {currentPrompt.type === "multi-select" ? <Text dimColor> · {choiceSelected.length} selected</Text> : null}
+                  {currentPrompt.type === "multi-select" ? <Text dimColor> · {enabledSelectedCount} selected{lockedSelectedCount > 0 ? ` · ${lockedSelectedCount} locked` : ""}</Text> : null}
                 </Text>
                 <Text dimColor>{currentPrompt.type === "multi-select" ? "type to filter · ↑/↓ move · space toggles · enter continues" : "type to filter · ↑/↓ move · enter chooses"}</Text>
                 {choiceLoading ? <Text color="yellow">Loading choices…</Text> : null}
@@ -1090,6 +1183,7 @@ export function SkillsManagerApp({ initialAction = "scan" }: SkillsManagerAppPro
                     {currentPrompt.type === "multi-select" ? `[${choiceSelected.includes(choice.value) ? "x" : " "}] ` : ""}
                     {choice.label}
                     {choice.description ? <Text dimColor> — {choice.description}</Text> : null}
+                    {choice.disabled ? <Text dimColor> (locked)</Text> : null}
                   </Text>
                 ))}
               </Box>

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createElement, type ComponentType } from "react";
 import { render } from "ink-testing-library";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,7 +10,10 @@ import {
   executeTuiAction,
   filterChoiceOptions,
   filterTuiActions,
+  managedSkillChoices,
   outputLines,
+  presetAddSkillChoices,
+  presetRemoveSkillChoices,
   SkillsManagerApp,
   TUI_ACTIONS,
   formatTuiOutput,
@@ -145,6 +148,26 @@ test("TUI searchable choice helpers filter options and keep the active row visib
   ]);
 });
 
+test("TUI managed skill choices include symlinked managed skill dirs with SKILL.md", async () => {
+  await withTempHome("sm-ink-symlink-choice-", async (home) => {
+    const externalSkill = join(home, "external-codex-insights");
+    const linkedSkill = join(home, ".agents", "skills-store", "skills", "codex-insights");
+    await mkdir(externalSkill, { recursive: true });
+    await mkdir(join(home, ".agents", "skills-store", "skills"), { recursive: true });
+    await writeFile(join(externalSkill, "SKILL.md"), "# Codex Insights\n");
+    await writeFile(join(externalSkill, "skill.json"), JSON.stringify({
+      id: "skill.example.codex-insights",
+      aliases: { claude: "codex-insights", codex: "codex-insights" },
+      compatibility: { claude: true, codex: true }
+    }));
+    await symlink(externalSkill, linkedSkill, "dir");
+
+    const choices = await managedSkillChoices();
+
+    assert.equal(choices.find((choice) => choice.label === "codex-insights")?.value, "skill.example.codex-insights");
+  });
+});
+
 test("TUI menu and output filter helpers narrow noisy lists without dropping scroll support", () => {
   assert.deepEqual(filterTuiActions(TUI_ACTIONS, "backup").map((action) => action.value), ["backup", "pre-migration-backup", "restore"]);
   assert.deepEqual(outputLines("Summary\nFull JSON\n  \"backup\": true", "json"), ["Full JSON"]);
@@ -173,6 +196,34 @@ test("TUI preset mutations accept multi-selected skill and preset values", async
     });
     assert.equal((deleted as { ok?: boolean }).ok, true);
     assert.equal((deleted as { count?: number }).count, 2);
+  });
+});
+
+test("TUI preset skill pickers lock existing entries on add and narrow remove choices", async () => {
+  await withTempHome("sm-ink-preset-picker-", async (home) => {
+    await writeManagedSkill(home, "skill.example.alpha", "alpha");
+    await writeManagedSkill(home, "skill.example.beta", "beta");
+    await writeManagedSkill(home, "skill.example.gamma", "gamma");
+    await executeTuiAction("preset-create", { name: "daily", dryRun: false });
+    await executeTuiAction("preset-add", {
+      name: "daily",
+      skills: ["skill.example.alpha"],
+      mode: "enable",
+      dryRun: false
+    });
+
+    const addChoices = await presetAddSkillChoices({ name: "daily", mode: "enable" });
+    assert.deepEqual(addChoices.find((choice) => choice.value === "skill.example.alpha"), {
+      value: "skill.example.alpha",
+      label: "alpha",
+      description: "skill.example.alpha · Claude+Codex · already in preset",
+      selected: true,
+      disabled: true
+    });
+    assert.equal(addChoices.find((choice) => choice.value === "skill.example.beta")?.disabled, undefined);
+
+    const removeChoices = await presetRemoveSkillChoices({ name: "daily", mode: "enable" });
+    assert.deepEqual(removeChoices.map((choice) => choice.value), ["skill.example.alpha"]);
   });
 });
 

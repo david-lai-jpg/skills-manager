@@ -300,11 +300,17 @@ export async function allSkills(env: Env = process.env): Promise<Record<string, 
     return result;
   }
 
-  const children = (await readdir(root, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .filter((name) => !shouldSkipLocalJunkName(name))
-    .sort();
+  const children: string[] = [];
+  const entries = (await readdir(root, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    if (shouldSkipLocalJunkName(entry.name)) {
+      continue;
+    }
+    const childPath = join(root, entry.name);
+    if (entry.isDirectory() || (entry.isSymbolicLink() && (await isSkillDir(childPath)))) {
+      children.push(entry.name);
+    }
+  }
 
   for (const child of children) {
     const childPath = join(root, child);
